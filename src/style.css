@@ -218,18 +218,12 @@ button {
 }
 
 .tilt {
-  width: min(100%, 640px, calc((100vh - 200px) * 1.05));
+  width: min(100%, 720px, calc((100vh - 190px) * 1.45));
   min-width: 300px;
-  transform-origin: 50% 50%;
-  transition: transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .tilt.shaky .board {
   animation: shake 0.28s infinite;
-}
-
-.tilt.tipped {
-  transition: transform 0.9s cubic-bezier(0.55, 0, 1, 0.45);
 }
 
 @keyframes shake {
@@ -254,21 +248,29 @@ button {
   overflow: visible;
 }
 
-.pipe {
-  fill: url(#pipe);
-  stroke: #22252a;
-  stroke-width: 1.5;
+.ground-shadow {
+  fill: rgba(0, 0, 0, 0.45);
+  filter: blur(14px);
 }
 
-.plate {
-  fill: url(#plate);
-  stroke: url(#plate);
+.pipe,
+.stand {
+  stroke: rgba(0, 0, 0, 0.45);
+  stroke-width: 0.8;
   stroke-linejoin: round;
-  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.7));
 }
 
-.plate-face {
+.plate-side {
+  stroke: rgba(0, 0, 0, 0.35);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+}
+
+.plate-top {
   fill: url(#plate);
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 1;
+  stroke-linejoin: round;
 }
 
 .pivot-line {
@@ -280,7 +282,7 @@ button {
 
 .slot-hex {
   fill: #15171b;
-  stroke: #4a5059;
+  stroke: #4f5660;
   stroke-width: 1.2;
   transition: fill 0.15s, stroke 0.15s;
 }
@@ -292,10 +294,10 @@ button {
   pointer-events: none;
 }
 .spawn-red .spawn-ring {
-  stroke: rgba(255, 69, 89, 0.55);
+  stroke: rgba(255, 69, 89, 0.6);
 }
 .spawn-blue .spawn-ring {
-  stroke: rgba(74, 168, 255, 0.55);
+  stroke: rgba(74, 168, 255, 0.6);
 }
 
 .slot.is-target {
@@ -312,20 +314,27 @@ button {
 
 .target-dot {
   fill: #ffd34d;
-  opacity: 0.8;
+  opacity: 0.85;
   cursor: pointer;
   filter: drop-shadow(0 0 6px #ffd34d);
 }
 
-.piece-layer {
-  fill: #5d636c;
-  stroke: #2b2f35;
-  stroke-width: 1;
+.piece-side {
+  stroke: rgba(30, 33, 38, 0.55);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
+}
+
+.seam {
+  stroke: rgba(40, 44, 50, 0.55);
+  stroke-width: 0.9;
+  pointer-events: none;
 }
 
 .piece-top {
   fill: url(#steel);
   stroke-width: 2.5;
+  stroke-linejoin: round;
 }
 .owner-red .piece-top {
   stroke: var(--red);
@@ -334,6 +343,12 @@ button {
 .owner-blue .piece-top {
   stroke: var(--blue);
   filter: drop-shadow(0 0 5px var(--blue-glow));
+}
+.owner-red .piece-side {
+  stroke: rgba(255, 69, 89, 0.55);
+}
+.owner-blue .piece-side {
+  stroke: rgba(74, 168, 255, 0.55);
 }
 
 .piece-sheen {
@@ -623,4 +638,79 @@ details summary {
     opacity: 0;
     transform: scale(0.96);
   }
+}
+
+/* ---------- Online ---------- */
+
+.online h3 {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.online p {
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+}
+.ghost-btn.wide {
+  width: 100%;
+}
+.net-status .dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.net-status.ok .dot {
+  background: #3ddc84;
+  box-shadow: 0 0 8px #3ddc84;
+}
+.net-status.pending .dot {
+  background: #ffd34d;
+  animation: pulse 1.2s infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+.invite {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.invite-row {
+  display: flex;
+  gap: 6px;
+}
+.invite input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+}
+.waiting {
+  padding: 16px;
+  border-radius: 14px;
+  text-align: center;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+.waiting.turn-red {
+  color: var(--red);
+}
+.waiting.turn-blue {
+  color: var(--blue);
 }

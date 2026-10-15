@@ -1,0 +1,235 @@
+// 2.5D renderer: projects the board, plate, pipe and stacks from 3D into SVG.
+// World axes: x to the right, y toward the bottom (Blue) edge, z up out of the plate.
+// The camera sits above Blue's edge looking down at CAMERA_ELEVATION; `flip` turns
+// the view around so Red's edge is nearest instead.
+
+import { CELLS, CENTER_H, SPAWNS, type Player } from './board';
+import type { ActionKind, Stack } from './rules';
+
+const R = 34; // cell circumradius
+const HALF_H = (Math.sqrt(3) / 2) * R; // one `h` unit
+const PAD = 22; // plate border around the outer cells
+const PLATE_T = 18; // plate thickness
+const PIECE_H = 8; // thickness of one steel piece
+const MAX_LAYERS = 16; // taller stacks are capped visually; the number shows the real count
+const CAMERA_ELEVATION = (50 * Math.PI) / 180; // 90° would be straight down
+const FOCAL = 2000; // mild perspective
+
+type V2 = [number, number];
+type V3 = [number, number, number];
+
+const midCol = 4;
+const boardXY = (id: number): V2 => [(CELLS[id].col - midCol) * 1.5 * R, (CELLS[id].h - CENTER_H) * HALF_H];
+
+function hex2(cx: number, cy: number, r: number): V2[] {
+  return Array.from({ length: 6 }, (_, i) => {
+    const a = (Math.PI / 3) * i;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)] as V2;
+  });
+}
+
+function convexHull(points: V2[]): V2[] {
+  const p = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: V2, a: V2, b: V2) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const build = (list: V2[]) => {
+    const out: V2[] = [];
+    for (const pt of list) {
+      while (out.length >= 2 && cross(out[out.length - 2], out[out.length - 1], pt) <= 0) out.pop();
+      out.push(pt);
+    }
+    return out;
+  };
+  const lower = build(p);
+  const upper = build(p.reverse());
+  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
+}
+
+const PLATE: V2[] = convexHull(CELLS.flatMap((c) => hex2(...boardXY(c.id), R + PAD)));
+const PLATE_HALF_W = Math.max(...PLATE.map((p) => p[0]));
+
+interface Camera {
+  lean: number; // radians; positive sinks the Blue (bottom, +y) edge
+  flip: boolean;
+}
+
+/** Board point → world (applies the lean about the pipe) → screen. */
+function project([x, y, z]: V3, cam: Camera, leans = true): { p: V2; depth: number } {
+  let wy = y;
+  let wz = z;
+  if (leans) {
+    // Rotate about the pipe's top edge (y = 0, z = -PLATE_T).
+    const c = Math.cos(cam.lean);
+    const s = Math.sin(cam.lean);
+    const zz = z + PLATE_T;
+    wy = y * c + zz * s;
+    wz = -PLATE_T - y * s + zz * c;
+  }
+  let wx = x;
+  if (cam.flip) {
+    wx = -wx;
+    wy = -wy;
+  }
+  const sinE = Math.sin(CAMERA_ELEVATION);
+  const cosE = Math.cos(CAMERA_ELEVATION);
+  const depth = wy * cosE + wz * sinE;
+  const k = FOCAL / (FOCAL - depth);
+  return { p: [wx * k, (wy * sinE - wz * cosE) * k], depth };
+}
+
+const fmt = (pts: V2[]) => pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+
+function shade(base: [number, number, number], light: number): string {
+  const f = 0.45 + 0.55 * Math.max(0, Math.min(1, light));
+  return `rgb(${base.map((v) => Math.round(v * f)).join(',')})`;
+}
+
+/** Light comes from the upper-left of the screen; returns 0..1 for a side face's outward normal. */
+function faceLight(nx: number, ny: number, flip: boolean): number {
+  const [sx, sy] = flip ? [-nx, -ny] : [nx, ny];
+  const len = Math.hypot(sx, sy) || 1;
+  return 0.5 + 0.5 * ((-0.45 * sx + 0.9 * sy) / len);
+}
+
+export interface BoardView {
+  stacks: (Stack | null)[];
+  pipeHalfWidth: number;
+  lean: number; // radians
+  flip: boolean;
+  sources: Set<number>;
+  targets: Map<number, ActionKind>;
+  from: number | null;
+}
+
+/** A fixed viewBox that fits the board at moderate lean in either orientation. */
+export const VIEWBOX = (() => {
+  const pts: V2[] = [];
+  for (const lean of [-0.12, 0, 0.12]) {
+    for (const flip of [false, true]) {
+      for (const [x, y] of PLATE) {
+        pts.push(project([x, y, 0], { lean, flip }).p, project([x, y, -PLATE_T], { lean, flip }).p);
+      }
+    }
+  }
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const minX = Math.min(...xs) - 60;
+  const minY = Math.min(...ys) - 70;
+  return { x: minX, y: minY, w: Math.max(...xs) + 60 - minX, h: Math.max(...ys) + 70 - minY };
+})();
+
+export function renderBoard(view: BoardView): string {
+  const cam: Camera = { lean: view.lean, flip: view.flip };
+  const P = (v: V3, leans = true) => project(v, cam, leans);
+  const out: string[] = [];
+
+  // Ground shadow and the pipe with its stands (the pipe does not lean).
+  const pipeA = Math.max(5, view.pipeHalfWidth * 2 * HALF_H);
+  const pipeTop = -PLATE_T;
+  const pipeBot = -PLATE_T - 2 * pipeA;
+  const ground = pipeBot - 70;
+  const pipeX = PLATE_HALF_W + 46;
+  const shadow = [-1, 1].flatMap((sx) => [-1, 1].map((sy) => P([sx * (PLATE_HALF_W + 10), sy * 230, ground], false).p));
+  out.push(`<polygon class="ground-shadow" points="${fmt([shadow[0], shadow[1], shadow[3], shadow[2]])}" />`);
+
+  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, cls: string) => {
+    const faces: { pts: V2[]; depth: number; light: number }[] = [];
+    const v = (x: number, y: number, z: number) => P([x, y, z], false);
+    const quad = (a: V3, b: V3, c: V3, d: V3, light: number) => {
+      const pp = [a, b, c, d].map((q) => v(...q));
+      faces.push({ pts: pp.map((q) => q.p), depth: pp.reduce((s, q) => s + q.depth, 0) / 4, light });
+    };
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 1); // top
+    quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], faceLight(0, 1, view.flip)); // +y
+    quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], faceLight(0, -1, view.flip)); // -y
+    quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], faceLight(-1, 0, view.flip)); // -x
+    quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], faceLight(1, 0, view.flip)); // +x
+    faces.sort((a, b) => a.depth - b.depth);
+    return faces.map((f) => `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade([150, 156, 166], f.light)}" />`).join('');
+  };
+  for (const sx of [-1, 1]) out.push(box(sx * pipeX - 9, sx * pipeX + 9, -16, 16, ground, pipeBot, 'stand'));
+  out.push(box(-pipeX - 14, pipeX + 14, -pipeA, pipeA, pipeBot, pipeTop, 'pipe'));
+
+  // Plate: side faces back-to-front, then the top face.
+  const sides = PLATE.map((a, i) => {
+    const b = PLATE[(i + 1) % PLATE.length];
+    const pts = [P([a[0], a[1], 0]), P([b[0], b[1], 0]), P([b[0], b[1], -PLATE_T]), P([a[0], a[1], -PLATE_T])];
+    const [ex, ey] = [b[0] - a[0], b[1] - a[1]];
+    return { pts: pts.map((q) => q.p), depth: pts.reduce((s, q) => s + q.depth, 0) / 4, light: faceLight(ey, -ex, view.flip) };
+  }).sort((a, b) => a.depth - b.depth);
+  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade([92, 98, 108], s.light)}" />`);
+  out.push(`<polygon class="plate-top" points="${fmt(PLATE.map(([x, y]) => P([x, y, 0]).p))}" />`);
+
+  // Pivot line drawn on the plate surface.
+  out.push(`<line class="pivot-line" x1="${P([-PLATE_HALF_W + 14, 0, 0]).p[0]}" y1="${P([-PLATE_HALF_W + 14, 0, 0]).p[1]}" x2="${P([PLATE_HALF_W - 14, 0, 0]).p[0]}" y2="${P([PLATE_HALF_W - 14, 0, 0]).p[1]}" />`);
+
+  // Slots.
+  const spawnOwner = new Map<number, Player>([...SPAWNS.red.map((id) => [id, 'red'] as const), ...SPAWNS.blue.map((id) => [id, 'blue'] as const)]);
+  for (const { id } of CELLS) {
+    const [cx, cy] = boardXY(id);
+    const spawn = spawnOwner.get(id);
+    const target = view.targets.get(id);
+    const classes = ['slot', spawn ? `spawn spawn-${spawn}` : '', view.sources.has(id) ? 'is-source' : '', target ? 'is-target' : '']
+      .filter(Boolean)
+      .join(' ');
+    const hex = (r: number) => fmt(hex2(cx, cy, r).map(([x, y]) => P([x, y, 0]).p));
+    out.push(`<g class="${classes}" data-id="${id}"><polygon class="slot-hex" points="${hex(R - 3)}" />${spawn ? `<polygon class="spawn-ring" points="${hex(R - 8)}" />` : ''}</g>`);
+  }
+
+  // Stacks, far to near.
+  const order = view.stacks
+    .map((stack, id) => ({ stack, id, depth: P([...boardXY(id), 0]).depth }))
+    .filter((s): s is { stack: Stack; id: number; depth: number } => s.stack !== null)
+    .sort((a, b) => a.depth - b.depth);
+  for (const { stack, id } of order) {
+    const [cx, cy] = boardXY(id);
+    const r = R - 7;
+    const height = Math.min(stack.count, MAX_LAYERS) * PIECE_H;
+    const ring = hex2(cx, cy, r);
+    const faces = ring
+      .map((a, i) => {
+        const b = ring[(i + 1) % 6];
+        const pts = [P([a[0], a[1], 0]), P([b[0], b[1], 0]), P([b[0], b[1], height]), P([a[0], a[1], height])];
+        const mid: V2 = [(a[0] + b[0]) / 2 - cx, (a[1] + b[1]) / 2 - cy];
+        // Lines between individual pieces.
+        const seams = Array.from({ length: Math.min(stack.count, MAX_LAYERS) - 1 }, (_, k) => {
+          const z = (k + 1) * PIECE_H;
+          const p1 = P([a[0], a[1], z]).p;
+          const p2 = P([b[0], b[1], z]).p;
+          return `<line class="seam" x1="${p1[0].toFixed(1)}" y1="${p1[1].toFixed(1)}" x2="${p2[0].toFixed(1)}" y2="${p2[1].toFixed(1)}" />`;
+        }).join('');
+        return {
+          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade([205, 210, 217], faceLight(mid[0], mid[1], view.flip))}" />${seams}`,
+          depth: pts.reduce((s, q) => s + q.depth, 0) / 4,
+        };
+      })
+      .sort((a, b) => a.depth - b.depth)
+      .map((f) => f.svg)
+      .join('');
+    const top = fmt(ring.map(([x, y]) => P([x, y, height]).p));
+    const sheen = fmt(hex2(cx, cy, r - 6).map(([x, y]) => P([x, y, height]).p));
+    const label = P([cx, cy, height]).p;
+    const classes = ['stack', `owner-${stack.owner}`, view.sources.has(id) ? 'is-source' : '', view.from === id ? 'is-from' : '', view.targets.has(id) ? 'is-target' : '']
+      .filter(Boolean)
+      .join(' ');
+    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" /><polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" x="${label[0].toFixed(1)}" y="${(label[1] + 6).toFixed(1)}">${stack.count}</text></g>`);
+  }
+
+  // Destination markers on empty cells.
+  for (const [id] of view.targets) {
+    if (view.stacks[id]) continue;
+    const [x, y] = P([...boardXY(id), 0]).p;
+    out.push(`<ellipse class="target-dot" data-id="${id}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="7" ry="${(7 * Math.sin(CAMERA_ELEVATION)).toFixed(1)}" />`);
+  }
+
+  return `<svg class="board" viewBox="${VIEWBOX.x.toFixed(0)} ${VIEWBOX.y.toFixed(0)} ${VIEWBOX.w.toFixed(0)} ${VIEWBOX.h.toFixed(0)}" role="img" aria-label="Hexagonal balance board">
+    <defs>
+      <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#454b54" /><stop offset="0.5" stop-color="#30343b" /><stop offset="1" stop-color="#22252b" />
+      </linearGradient>
+      <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#eef1f4" /><stop offset="0.45" stop-color="#b3bac3" /><stop offset="1" stop-color="#858c96" />
+      </linearGradient>
+    </defs>
+    ${out.join('\n')}
+  </svg>`;
+}

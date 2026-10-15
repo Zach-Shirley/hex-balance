@@ -1,5 +1,4 @@
 import './style.css';
-import { CELLS, CENTER_H, SPAWNS } from './board';
 import {
   ACTION_HELP,
   ACTION_LABELS,
@@ -19,51 +18,11 @@ import {
   type ActionKind,
   type DieFace,
   type GameState,
+  type Player,
   type Settings,
 } from './rules';
-
-// ---------- Geometry for drawing ----------
-
-const R = 34; // cell circumradius in px
-const HALF_H = (Math.sqrt(3) / 2) * R; // half the cell height = one `h` unit
-const PAD = 26;
-
-const centerOf = (id: number) => ({ x: CELLS[id].col * 1.5 * R, y: CELLS[id].h * HALF_H });
-
-function hexPoints(cx: number, cy: number, r: number): [number, number][] {
-  return Array.from({ length: 6 }, (_, i) => {
-    const a = (Math.PI / 3) * i;
-    return [cx + r * Math.cos(a), cy + r * Math.sin(a)] as [number, number];
-  });
-}
-const pts = (points: [number, number][]) => points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
-
-function convexHull(points: [number, number][]): [number, number][] {
-  const p = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
-  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
-  const lower: [number, number][] = [];
-  for (const pt of p) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], pt) <= 0) lower.pop();
-    lower.push(pt);
-  }
-  const upper: [number, number][] = [];
-  for (const pt of p.reverse()) {
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], pt) <= 0) upper.pop();
-    upper.push(pt);
-  }
-  return [...lower.slice(0, -1), ...upper.slice(0, -1)];
-}
-
-const PLATE_HULL = convexHull(CELLS.flatMap((c) => hexPoints(centerOf(c.id).x, centerOf(c.id).y, R)));
-const xs = PLATE_HULL.map((p) => p[0]);
-const ys = PLATE_HULL.map((p) => p[1]);
-const VIEW = {
-  x: Math.min(...xs) - PAD - 30,
-  y: Math.min(...ys) - PAD - 10,
-  w: Math.max(...xs) - Math.min(...xs) + 2 * PAD + 60,
-  h: Math.max(...ys) - Math.min(...ys) + 2 * PAD + 20,
-};
-const PIVOT_Y = CENTER_H * HALF_H;
+import { renderBoard } from './view3d';
+import { GuestSession, HostSession, newRoomCode, type Intent, type NetStatus } from './net';
 
 // ---------- State ----------
 
@@ -73,8 +32,23 @@ interface Ui {
   from: number | null;
 }
 
+interface Online {
+  mode: 'local' | 'host' | 'guest';
+  code: string | null;
+  status: NetStatus | null;
+  detail: string | null;
+}
+
 let state: GameState = newGame(loadSettings());
 let ui: Ui = { die: null, kind: null, from: null };
+let online: Online = { mode: 'local', code: null, status: null, detail: null };
+let host: HostSession | null = null;
+let guest: GuestSession | null = null;
+/** Local hot-seat views from Blue's edge; online players view from their own edge. */
+let viewFlip = false;
+
+const myColor = (): Player | null => (online.mode === 'host' ? 'red' : online.mode === 'guest' ? 'blue' : null);
+const canAct = () => state.phase !== 'over' && (myColor() === null || state.turn === myColor());
 
 function loadSettings(): Settings {
   try {
@@ -91,6 +65,25 @@ function saveSettings(settings: Settings) {
     localStorage.setItem('hex-balance-settings', JSON.stringify(settings));
   } catch {
     // storage unavailable; settings still apply for this session
+  }
+}
+
+const hostKey = (code: string) => `hex-balance-host-${code}`;
+
+function saveHostState() {
+  if (online.mode !== 'host' || !online.code) return;
+  try {
+    localStorage.setItem(hostKey(online.code), JSON.stringify(state));
+  } catch {
+    // a reload will start a fresh game instead of resuming
+  }
+}
+
+function loadHostState(code: string): GameState | null {
+  try {
+    return JSON.parse(localStorage.getItem(hostKey(code)) ?? 'null');
+  } catch {
+    return null;
   }
 }
 
@@ -111,22 +104,116 @@ function targets(): Action[] {
   return currentLegal();
 }
 
-function commit(next: GameState) {
+// ---------- Intents (shared by local play, the host and the guest) ----------
+
+function resolveIntent(current: GameState, intent: Intent): GameState {
+  switch (intent.type) {
+    case 'roll':
+      return roll(current);
+    case 'act':
+      return applyAction(current, intent.die, intent.action);
+    case 'pass':
+      return skipDie(current, intent.die);
+    case 'new':
+      return newGame(current.settings);
+  }
+}
+
+function setState(next: GameState) {
   state = next;
   ui = { die: null, kind: null, from: null };
+  saveHostState();
+  host?.send(state);
   render();
 }
 
-// ---------- Actions from the UI ----------
-
-function onRoll() {
-  if (state.phase !== 'roll') return;
-  commit(roll(state));
+function dispatch(intent: Intent) {
+  if (online.mode === 'guest') {
+    guest?.send(intent);
+    ui = { die: null, kind: null, from: null };
+    render();
+    return;
+  }
+  try {
+    setState(resolveIntent(state, intent));
+  } catch (err) {
+    console.warn('Rejected intent', intent, err);
+  }
 }
+
+/** The host applies the guest's intents only on Blue's turn (or to restart a finished game). */
+function onGuestIntent(intent: Intent) {
+  const allowed = intent.type === 'new' ? state.phase === 'over' : state.turn === 'blue';
+  if (!allowed) return host?.send(state);
+  try {
+    setState(resolveIntent(state, intent));
+  } catch {
+    host?.send(state);
+  }
+}
+
+// ---------- Online sessions ----------
+
+function setStatus(status: NetStatus, detail?: string) {
+  online = { ...online, status, detail: detail ?? null };
+  render();
+}
+
+function startHost(code = newRoomCode(), resume = false) {
+  leaveOnline(false);
+  if (resume) {
+    const saved = loadHostState(code);
+    if (saved) state = saved;
+  } else {
+    state = newGame(state.settings);
+  }
+  online = { mode: 'host', code, status: 'starting', detail: null };
+  viewFlip = true;
+  history.replaceState(null, '', `?host=${code}`);
+  saveHostState();
+  host = new HostSession(code, { onStatus: setStatus, onIntent: onGuestIntent, getState: () => state });
+  render();
+}
+
+function startGuest(code: string) {
+  leaveOnline(false);
+  online = { mode: 'guest', code, status: 'starting', detail: null };
+  viewFlip = false;
+  history.replaceState(null, '', `?join=${code}`);
+  guest = new GuestSession(code, {
+    onStatus: setStatus,
+    onState: (next) => {
+      state = next;
+      ui = { die: null, kind: null, from: null };
+      render();
+    },
+  });
+  render();
+}
+
+function leaveOnline(rerender = true) {
+  host?.destroy();
+  guest?.destroy();
+  host = null;
+  guest = null;
+  if (online.mode !== 'local') {
+    online = { mode: 'local', code: null, status: null, detail: null };
+    viewFlip = false;
+    history.replaceState(null, '', location.pathname);
+    if (rerender) {
+      state = newGame(state.settings);
+      render();
+    }
+  }
+}
+
+const inviteLink = () => `${location.origin}${location.pathname}?join=${online.code}`;
+
+// ---------- UI handlers ----------
 
 function selectDie(index: number) {
   const die = state.dice[index];
-  if (!die || die.used || state.phase !== 'act') return;
+  if (!canAct() || !die || die.used || state.phase !== 'act') return;
   const kinds = allowedKinds(die.face);
   ui = { die: index, kind: kinds.length === 1 ? kinds[0] : null, from: null };
   render();
@@ -139,12 +226,9 @@ function selectKind(kind: ActionKind) {
 }
 
 function onCellClick(id: number) {
-  if (state.phase !== 'act' || ui.die === null || !ui.kind) return;
+  if (!canAct() || state.phase !== 'act' || ui.die === null || !ui.kind) return;
   const target = targets().find((a) => a.to === id);
-  if (target) {
-    commit(applyAction(state, ui.die, target));
-    return;
-  }
+  if (target) return dispatch({ type: 'act', die: ui.die, action: target });
   if (needsSource(ui.kind) && sources().has(id)) {
     ui = { ...ui, from: ui.from === id ? null : id };
   } else {
@@ -158,84 +242,55 @@ function previewRatio(action: Action | null): number | null {
   return balance({ settings: state.settings, stacks: resolveStacks(state.stacks, state.turn, action) }).ratio;
 }
 
-// ---------- Rendering ----------
+// ---------- Board animation ----------
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
+let shownLean = 0;
+let leanAnim: number | null = null;
 
-function boardSvg(): string {
-  const src = sources();
-  const tgt = new Map(targets().map((a) => [a.to, a]));
-  const pipeHalf = Math.max(4, state.settings.pipeHalfWidth * 2 * HALF_H);
-  const spawnOwner = new Map<number, string>([
-    ...SPAWNS.red.map((id) => [id, 'red'] as [number, string]),
-    ...SPAWNS.blue.map((id) => [id, 'blue'] as [number, string]),
-  ]);
-
-  const slots = CELLS.map(({ id }) => {
-    const { x, y } = centerOf(id);
-    const spawn = spawnOwner.get(id);
-    const classes = ['slot', spawn ? `spawn spawn-${spawn}` : '', src.has(id) ? 'is-source' : '', tgt.has(id) ? `is-target target-${tgt.get(id)!.kind}` : '', ui.from === id ? 'is-from' : '']
-      .filter(Boolean)
-      .join(' ');
-    return `<g class="${classes}" data-id="${id}">
-      <polygon class="slot-hex" points="${pts(hexPoints(x, y, R - 3))}" />
-      ${spawn ? `<polygon class="spawn-ring" points="${pts(hexPoints(x, y, R - 6))}" />` : ''}
-    </g>`;
-  }).join('');
-
-  const pieces = state.stacks
-    .map((stack, id) => {
-      if (!stack) return '';
-      const { x, y } = centerOf(id);
-      const layers = Math.min(stack.count, 6);
-      const lift = 3;
-      // Taller stacks are drawn as offset layers so their height reads at a glance.
-      const under = Array.from(
-        { length: layers - 1 },
-        (_, i) => `<polygon class="piece-layer" points="${pts(hexPoints(x, y - i * lift, R - 7))}" />`,
-      ).join('');
-      const topY = y - (layers - 1) * lift;
-      const classes = ['stack', `owner-${stack.owner}`, src.has(id) ? 'is-source' : '', ui.from === id ? 'is-from' : '', tgt.has(id) ? 'is-target' : '']
-        .filter(Boolean)
-        .join(' ');
-      return `<g class="${classes}" data-id="${id}">
-        ${under}
-        <polygon class="piece-top" points="${pts(hexPoints(x, topY, R - 7))}" />
-        <polygon class="piece-sheen" points="${pts(hexPoints(x, topY, R - 13))}" />
-        <text class="piece-count" x="${x}" y="${topY + 6}">${stack.count}</text>
-      </g>`;
-    })
-    .join('');
-
-  const markers = targets()
-    .filter((a) => !state.stacks[a.to])
-    .map((a) => {
-      const { x, y } = centerOf(a.to);
-      return `<circle class="target-dot" data-id="${a.to}" cx="${x}" cy="${y}" r="7" />`;
-    })
-    .join('');
-
-  return `<svg class="board" viewBox="${VIEW.x} ${VIEW.y} ${VIEW.w} ${VIEW.h}" role="img" aria-label="Hexagonal balance board">
-    <defs>
-      <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#3a3f47" /><stop offset="0.5" stop-color="#2a2e35" /><stop offset="1" stop-color="#1d2026" />
-      </linearGradient>
-      <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#e3e7ec" /><stop offset="0.45" stop-color="#aab1ba" /><stop offset="1" stop-color="#7c838d" />
-      </linearGradient>
-      <linearGradient id="pipe" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#6b7079" /><stop offset="0.5" stop-color="#9aa0a8" /><stop offset="1" stop-color="#4a4e55" />
-      </linearGradient>
-    </defs>
-    <rect class="pipe" x="${VIEW.x + 4}" y="${PIVOT_Y - pipeHalf}" width="${VIEW.w - 8}" height="${pipeHalf * 2}" rx="3" />
-    <polygon class="plate" points="${pts(PLATE_HULL)}" stroke-width="${PAD * 2}" />
-    <polygon class="plate-face" points="${pts(PLATE_HULL)}" />
-    <line class="pivot-line" x1="${VIEW.x + 20}" x2="${VIEW.x + VIEW.w - 20}" y1="${PIVOT_Y}" y2="${PIVOT_Y}" />
-    ${slots}
-    ${pieces}
-    ${markers}
-  </svg>`;
+/** Radians. A small lean while standing (visual only), a big one once it tips. */
+function targetLean(): number {
+  if (state.phase === 'over') return state.loser === 'blue' ? 0.5 : -0.5;
+  return Math.max(-1, Math.min(1, balance(state).ratio)) * 0.1;
 }
+
+function drawBoard() {
+  const host = app.querySelector<HTMLElement>('.board-host');
+  if (!host) return;
+  host.innerHTML = renderBoard({
+    stacks: state.stacks,
+    pipeHalfWidth: state.settings.pipeHalfWidth,
+    lean: shownLean,
+    flip: viewFlip,
+    sources: canAct() ? sources() : new Set(),
+    targets: canAct() ? new Map(targets().map((a) => [a.to, a.kind])) : new Map(),
+    from: ui.from,
+  });
+}
+
+function animateLean() {
+  if (leanAnim !== null) cancelAnimationFrame(leanAnim);
+  const start = shownLean;
+  const end = targetLean();
+  if (Math.abs(end - start) < 1e-4) {
+    shownLean = end;
+    drawBoard();
+    return;
+  }
+  const tipping = state.phase === 'over';
+  const duration = tipping ? 900 : 450;
+  const t0 = performance.now();
+  const frame = (now: number) => {
+    const t = Math.min(1, (now - t0) / duration);
+    const eased = tipping ? t * t * t : 1 - Math.pow(1 - t, 3);
+    shownLean = start + (end - start) * eased;
+    drawBoard();
+    leanAnim = t < 1 ? requestAnimationFrame(frame) : null;
+  };
+  leanAnim = requestAnimationFrame(frame);
+}
+
+// ---------- Rendering ----------
 
 const PIPS: Record<DieFace, [number, number][]> = {
   1: [[50, 50]],
@@ -253,8 +308,11 @@ const dieFace = (face: DieFace) =>
 
 function dicePanel(): string {
   if (state.phase === 'over') return '';
+  const mine = canAct();
   if (state.phase === 'roll') {
-    return `<button class="roll-btn turn-${state.turn}" data-act="roll">Roll dice <kbd>Space</kbd></button>`;
+    return mine
+      ? `<button class="roll-btn turn-${state.turn}" data-act="roll">Roll dice <kbd>Space</kbd></button>`
+      : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`;
   }
   const dice = state.dice
     .map((die, i) => {
@@ -264,18 +322,18 @@ function dicePanel(): string {
         .filter(Boolean)
         .join(' ');
       return `<div class="${classes}">
-        <button class="die-btn" data-die="${i}" ${die.used ? 'disabled' : ''}>
+        <button class="die-btn" data-die="${i}" ${die.used || !mine ? 'disabled' : ''}>
           ${dieFace(die.face)}
           <span class="die-label">${meaning === 'wild' ? 'Wild' : ACTION_LABELS[meaning]}</span>
           ${!die.used && !playable ? '<span class="die-note">no legal move</span>' : ''}
         </button>
-        ${die.used ? '<span class="die-used">used</span>' : `<button class="pass-btn" data-pass="${i}">Pass</button>`}
+        ${die.used ? '<span class="die-used">used</span>' : mine ? `<button class="pass-btn" data-pass="${i}">Pass</button>` : ''}
       </div>`;
     })
     .join('');
 
   let chooser = '';
-  if (ui.die !== null && DIE_ACTIONS[state.dice[ui.die].face] === 'wild') {
+  if (mine && ui.die !== null && DIE_ACTIONS[state.dice[ui.die].face] === 'wild') {
     chooser = `<div class="wild-choices">${(Object.keys(ACTION_LABELS) as ActionKind[])
       .map((k) => {
         const n = legalActions(state, k).length;
@@ -288,7 +346,8 @@ function dicePanel(): string {
 
 function hint(): string {
   if (state.phase === 'over') return `Game over: the board tipped toward ${playerName(state.loser!)}. Start a new game to play again.`;
-  if (state.phase === 'roll') return `${playerName(state.turn)}'s turn. Roll two dice; each die is one action.`;
+  if (!canAct()) return `${playerName(state.turn)} is playing. You'll see their moves here.`;
+  if (state.phase === 'roll') return `${myColor() ? 'Your' : `${playerName(state.turn)}'s`} turn. Roll two dice; each die is one action.`;
   if (ui.die === null) return 'Pick a die to use it, or pass on it.';
   if (!ui.kind) return 'Wild die: choose any action.';
   const legal = currentLegal();
@@ -307,8 +366,8 @@ function balanceBar(): string {
   const status = state.loser
     ? `The board tipped toward <strong class="c-${state.loser}">${playerName(state.loser)}</strong>`
     : leader
-    ?`<strong class="c-${leader}">${playerName(leader)}</strong> is winning: ${playerName(sinking!)}'s side is ${Math.round(Math.abs(b.ratio) * 100)}% of the way to tipping`
-    : 'Level';
+      ? `<strong class="c-${leader}">${playerName(leader)}</strong> is winning: ${playerName(sinking!)}'s side is ${Math.round(Math.abs(b.ratio) * 100)}% of the way to tipping`
+      : 'Level';
   return `<div class="balance">
     <div class="balance-ends"><span class="c-red">◀ Red wins</span><span class="balance-status">${status}</span><span class="c-blue">Blue wins ▶</span></div>
     <div class="balance-track">
@@ -321,7 +380,42 @@ function balanceBar(): string {
   </div>`;
 }
 
+const STATUS_TEXT: Record<NetStatus, string> = {
+  starting: 'Opening the room…',
+  waiting: 'Waiting for your friend to open the link.',
+  connecting: 'Connecting…',
+  connected: 'Connected',
+  disconnected: 'Disconnected',
+  full: 'This room already has two players.',
+  error: 'Connection problem',
+};
+
+function onlinePanel(): string {
+  if (online.mode === 'local') {
+    return `<div class="panel online">
+      <h3>Online</h3>
+      <p class="muted">Playing hot-seat on this device. Create a room to play a friend on another device: you are Red, they are Blue.</p>
+      <button class="ghost-btn wide" data-act="host">Create online room</button>
+    </div>`;
+  }
+  const s = online.status ? STATUS_TEXT[online.status] : '';
+  const good = online.status === 'connected';
+  const opponent = online.mode === 'host' ? (good ? 'Your friend is connected.' : s) : good ? 'Connected to the host.' : s;
+  return `<div class="panel online">
+    <h3>Online · room ${online.code}</h3>
+    <p>You are <strong class="c-${myColor()}">${playerName(myColor()!)}</strong>.</p>
+    <p class="net-status ${good ? 'ok' : 'pending'}"><span class="dot"></span>${opponent}${online.detail ? ` <span class="muted">${online.detail}</span>` : ''}</p>
+    ${
+      online.mode === 'host'
+        ? `<label class="invite">Send this link to your friend<span class="invite-row"><input readonly value="${inviteLink()}" /><button class="ghost-btn" data-act="copy">Copy</button></span></label>`
+        : ''
+    }
+    <button class="ghost-btn wide" data-act="leave">Leave online game</button>
+  </div>`;
+}
+
 function settingsPanel(): string {
+  if (online.mode === 'guest') return '';
   const s = state.settings;
   const edgePieces = Math.ceil((s.pipeHalfWidth * s.boardMass) / (3.5 - s.pipeHalfWidth));
   return `<details class="panel settings">
@@ -343,43 +437,48 @@ function rulesPanel(): string {
     .join('');
   return `<details class="panel rules">
     <summary>Rules</summary>
-    <p>The plate balances on a square pipe across its middle. Red's half is the top and Blue's half is the bottom. Weight far from the pipe counts more. If the board tips toward you, you lose — so push your stacks onto your opponent's side.</p>
+    <p>The plate balances on a square pipe across its middle. Each player owns the half on their side of the pipe, with three spawn slots on its outer edge. Weight far from the pipe counts more. If the board tips toward you, you lose — so push your stacks onto your opponent's side.</p>
     <table>${rows}</table>
     <p class="muted">Each turn roll two dice and use each one once, in any order, or pass on it. Enemy stacks block movement, and an enemy stack on your spawn slot stops you spawning there. The board can tip after any action, including toward the player who moved.</p>
   </details>`;
 }
 
+function resultCard(): string {
+  if (state.phase !== 'over') return '';
+  const winner = other(state.loser!);
+  const me = myColor();
+  const title = me ? (winner === me ? 'You win' : 'You lose') : `${playerName(winner)} wins`;
+  return `<div class="result"><div class="result-card"><h2 class="c-${winner}">${title}</h2><p>The board tipped toward ${playerName(state.loser!)}.</p><button class="roll-btn turn-${winner}" data-act="new">Play again</button></div></div>`;
+}
+
 function render() {
   const b = balance(state);
-  // Positive rotateX brings the bottom edge toward the viewer, so negate it to make the heavy side sink away.
-  const tiltDeg = state.phase === 'over' ? (state.loser === 'blue' ? -55 : 55) : -b.ratio * 14;
   const shaky = state.phase !== 'over' && Math.abs(b.ratio) >= 0.8;
+  const far: Player = viewFlip ? 'blue' : 'red';
+  const near = other(far);
+  const turnText = state.phase === 'over' ? 'Game over' : `Turn ${state.turnNumber} · <strong>${myColor() && state.turn === myColor() ? 'You' : playerName(state.turn)}</strong>`;
 
   app.innerHTML = `
     <header class="top">
       <h1>Hex Balance</h1>
-      <div class="turn turn-${state.turn}">${state.phase === 'over' ? 'Game over' : `Turn ${state.turnNumber} · <strong>${playerName(state.turn)}</strong>`}</div>
-      <button class="ghost-btn" data-act="new">New game</button>
+      <div class="turn turn-${state.turn}">${turnText}</div>
+      <button class="ghost-btn" data-act="rotate" title="Turn the board around">Rotate view</button>
+      ${online.mode === 'guest' ? '' : '<button class="ghost-btn" data-act="new">New game</button>'}
     </header>
     ${balanceBar()}
     <main class="layout">
       <section class="stage">
-        <div class="side-label c-red">Red side · spawns along this edge</div>
-        <div class="tilt ${shaky ? 'shaky' : ''} ${state.phase === 'over' ? 'tipped' : ''}" style="transform: perspective(900px) rotateX(${tiltDeg}deg)">
-          ${boardSvg()}
-        </div>
-        <div class="side-label c-blue">Blue side · spawns along this edge</div>
-        ${
-          state.phase === 'over'
-            ? `<div class="result"><div class="result-card"><h2 class="c-${other(state.loser!)}">${playerName(other(state.loser!))} wins</h2><p>The board tipped toward ${playerName(state.loser!)}.</p><button class="roll-btn turn-${other(state.loser!)}" data-act="new">Play again</button></div></div>`
-            : ''
-        }
+        <div class="side-label c-${far}">${playerName(far)} side</div>
+        <div class="tilt ${shaky ? 'shaky' : ''}"><div class="board-host"></div></div>
+        <div class="side-label c-${near}">${playerName(near)} side</div>
+        ${resultCard()}
       </section>
       <aside class="sidebar">
         <div class="panel actions-panel">
           ${dicePanel()}
           <p class="hint">${hint()}</p>
         </div>
+        ${onlinePanel()}
         <div class="panel log"><h3>Log</h3><ol>${state.log
           .slice(-14)
           .reverse()
@@ -389,6 +488,8 @@ function render() {
         ${settingsPanel()}
       </aside>
     </main>`;
+  drawBoard();
+  animateLean();
 }
 
 // ---------- Events ----------
@@ -396,8 +497,22 @@ function render() {
 app.addEventListener('click', (event) => {
   const el = event.target as HTMLElement;
   const act = el.closest<HTMLElement>('[data-act]')?.dataset.act;
-  if (act === 'roll') return onRoll();
-  if (act === 'new') return commit(newGame(state.settings));
+  if (act === 'roll') return canAct() && dispatch({ type: 'roll' });
+  if (act === 'new') {
+    if (online.mode === 'guest' && state.phase !== 'over') return;
+    return dispatch({ type: 'new' });
+  }
+  if (act === 'rotate') {
+    viewFlip = !viewFlip;
+    return render();
+  }
+  if (act === 'host') return startHost();
+  if (act === 'leave') return leaveOnline();
+  if (act === 'copy') {
+    navigator.clipboard?.writeText(inviteLink()).catch(() => undefined);
+    el.textContent = 'Copied';
+    return;
+  }
   if (act === 'apply-settings') {
     const read = (name: string) => Number(app.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.value);
     const settings: Settings = {
@@ -406,12 +521,12 @@ app.addEventListener('click', (event) => {
       startingPieces: Math.max(0, Math.min(5, Math.round(read('startingPieces') || 0))),
     };
     saveSettings(settings);
-    return commit(newGame(settings));
+    return setState(newGame(settings));
   }
   const die = el.closest<HTMLElement>('[data-die]')?.dataset.die;
   if (die !== undefined) return selectDie(Number(die));
   const pass = el.closest<HTMLElement>('[data-pass]')?.dataset.pass;
-  if (pass !== undefined) return commit(skipDie(state, Number(pass)));
+  if (pass !== undefined) return canAct() && dispatch({ type: 'pass', die: Number(pass) });
   const kind = el.closest<HTMLElement>('[data-kind]')?.dataset.kind;
   if (kind) return selectKind(kind as ActionKind);
   const cell = el.closest<SVGElement>('[data-id]')?.dataset.id;
@@ -423,7 +538,7 @@ app.addEventListener('mouseover', (event) => {
   const ghost = app.querySelector<HTMLElement>('.balance-ghost');
   if (!ghost) return;
   const cell = (event.target as Element).closest<SVGElement>('[data-id]')?.dataset.id;
-  const action = cell === undefined ? null : targets().find((a) => a.to === Number(cell)) ?? null;
+  const action = cell === undefined || !canAct() ? null : (targets().find((a) => a.to === Number(cell)) ?? null);
   const ratio = previewRatio(action);
   if (ratio === null) {
     ghost.classList.remove('show', 'fatal');
@@ -437,9 +552,9 @@ app.addEventListener('mouseover', (event) => {
 window.addEventListener('keydown', (event) => {
   if ((event.target as HTMLElement).tagName === 'INPUT') return;
   if (event.code === 'Space' || event.code === 'Enter') {
-    if (state.phase === 'roll') {
+    if (state.phase === 'roll' && canAct()) {
       event.preventDefault();
-      onRoll();
+      dispatch({ type: 'roll' });
     }
   } else if (event.code === 'Escape') {
     ui = { die: null, kind: null, from: null };
@@ -449,4 +564,11 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
-render();
+// ---------- Boot ----------
+
+const params = new URLSearchParams(location.search);
+const joinCode = params.get('join')?.toUpperCase();
+const hostCode = params.get('host')?.toUpperCase();
+if (joinCode) startGuest(joinCode);
+else if (hostCode) startHost(hostCode, true);
+else render();
