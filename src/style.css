@@ -1335,3 +1335,43 @@ summary,
 :root[data-theme="forge"] .theme-opt.active {
   box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(201, 162, 95, 0.3);
 }
+
+/* Mother lode: pick a double combo. */
+.combo-choice {
+  display: grid;
+  gap: 6px;
+}
+.choice-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 211, 77, 0.45);
+  background: rgba(255, 211, 77, 0.06);
+}
+.choice-btn:hover {
+  background: rgba(255, 211, 77, 0.16);
+}
+.choice-btn .die-face {
+  width: 30px;
+  height: 30px;
+}
+.choice-btn strong {
+  display: block;
+  font-size: 0.88rem;
+}
+.choice-btn small {
+  display: block;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.choice-btn.tone-mixed {
+  border-color: rgba(196, 139, 255, 0.5);
+}
+:root[data-theme="forge"] .choice-btn {
+  border-radius: 4px;
+  border-color: var(--brass);
+  background: linear-gradient(180deg, #3a3027, #241e19);
+}

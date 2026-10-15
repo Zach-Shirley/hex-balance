@@ -9,6 +9,7 @@ import {
   skipDie,
   playableActions,
   canPass,
+  chooseCombo,
   piecesOf,
   type DieFace,
   type GameState,
@@ -173,14 +174,31 @@ describe('experiments', () => {
     expect(state.stacks[cellAt(4, 8)!]).toEqual({ owner: 'red', count: 3 });
   });
 
-  it('jackpot grants a bonus roll to the same player without chaining combos', () => {
+  it('jackpot grants a bonus roll; combos still apply on it but cannot chain another roll', () => {
     let state = withDice(combos(), 6, 6);
     state = skipDie(skipDie(state, 0), 1);
     expect(state.turn).toBe('red');
     expect(state.phase).toBe('roll');
-    state = withDice(state, 1, 1);
-    expect(state.combo).toBeNull();
-    expect(state.dice).toHaveLength(2);
+    state = withDice(state, 6, 6);
+    expect(state.combo?.name).toBe('Jackpot');
+    expect(state.bonusRoll).toBe(false);
+  });
+
+  it('a pair counts wherever the matching dice sit in a three-dice roll', () => {
+    for (const faces of [[4, 2, 4], [4, 4, 2], [2, 4, 4]]) {
+      expect(withDice2(combos({ diceCount: 3 }), faces).combo?.name).toBe('Convert');
+    }
+  });
+
+  it('triple sixes let the player pick a double combo, then roll again', () => {
+    let state = withDice2(combos({ diceCount: 3 }), [6, 6, 6]);
+    expect(state.comboChoice).toBe(true);
+    expect(() => chooseCombo(state, 1)).toThrow();
+    state = chooseCombo(state, 2);
+    expect(state.dice.filter((d) => d.action === 'move')).toHaveLength(4);
+    state = state.dice.reduce((s, _, i) => skipDie(s, i), state);
+    expect(state.turn).toBe('red');
+    expect(state.isBonusRoll).toBe(true);
   });
 
   it('three-dice mode rolls three dice and triples trigger their own combo', () => {

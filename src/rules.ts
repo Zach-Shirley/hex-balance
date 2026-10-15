@@ -114,8 +114,10 @@ export interface GameState {
   combo?: Combo | null;
   /** After these dice are used, the same player rolls again. */
   bonusRoll?: boolean;
-  /** The current roll is a bonus roll (combos cannot chain). */
+  /** The current roll is a bonus roll: combos still apply, but cannot grant another roll. */
   isBonusRoll?: boolean;
+  /** Triple sixes: the player is choosing which double combo to take. */
+  comboChoice?: boolean;
 }
 
 export const other = (player: Player): Player => (player === 'red' ? 'blue' : 'red');
@@ -140,6 +142,7 @@ export function newGame(settings: Settings = DEFAULT_SETTINGS): GameState {
     combo: null,
     bonusRoll: false,
     isBonusRoll: false,
+    comboChoice: false,
   };
 }
 
@@ -224,7 +227,7 @@ export const DOUBLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) =
 };
 
 /** Three of a kind (three-dice mode with combos on). */
-export const TRIPLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) => Die[]; bonusRoll?: boolean }> = {
+export const TRIPLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) => Die[]; bonusRoll?: boolean; choice?: boolean }> = {
   1: {
     combo: { name: 'Cave-in', text: 'Five forced spawns on your own edge. Brace yourself.', tone: 'bad' },
     dice: (f) => Array.from({ length: 5 }, (_, i) => make(f, 'spawn', { forced: true, bonus: i > 2 })),
@@ -250,30 +253,40 @@ export const TRIPLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) =
     bonusRoll: true,
   },
   6: {
-    combo: { name: 'Mother lode', text: 'Three wilds, then roll again.', tone: 'good' },
-    dice: (f) => [make(f, 'wild'), make(f, 'wild'), make(f, 'wild')],
+    combo: { name: 'Mother lode', text: 'Pick any double combo, then roll again.', tone: 'good' },
+    dice: () => [],
     bonusRoll: true,
+    choice: true,
   },
 };
 
-/** Turn rolled faces into the dice a player actually gets, applying combos. */
-export function buildDice(faces: DieFace[], combos: boolean): { dice: Die[]; combo: Combo | null; bonusRoll: boolean } {
+/** Double combos a Mother lode player may pick. */
+export const CHOOSABLE_COMBOS: DieFace[] = [2, 3, 4, 5, 6];
+
+/**
+ * Turn rolled faces into the dice a player actually gets, applying combos. A pair is any
+ * two dice showing the same face, wherever they sit in the roll.
+ */
+export function buildDice(
+  faces: DieFace[],
+  combos: boolean,
+): { dice: Die[]; combo: Combo | null; bonusRoll: boolean; choice: boolean } {
   const plain = (f: DieFace): Die => ({ face: f, used: false });
-  if (!combos) return { dice: faces.map(plain), combo: null, bonusRoll: false };
+  if (!combos) return { dice: faces.map(plain), combo: null, bonusRoll: false, choice: false };
   const counts = new Map<DieFace, number>();
   for (const f of faces) counts.set(f, (counts.get(f) ?? 0) + 1);
   const triple = [...counts].find(([, n]) => n >= 3)?.[0];
   if (triple) {
     const t = TRIPLE_COMBOS[triple];
-    return { dice: t.dice(triple), combo: t.combo, bonusRoll: !!t.bonusRoll };
+    return { dice: t.dice(triple), combo: t.combo, bonusRoll: !!t.bonusRoll, choice: !!t.choice };
   }
   const pair = [...counts].find(([, n]) => n === 2)?.[0];
   if (pair) {
     const d = DOUBLE_COMBOS[pair];
     const rest = faces.filter((f) => f !== pair).map(plain);
-    return { dice: [...d.dice(pair), ...rest], combo: d.combo, bonusRoll: !!d.bonusRoll };
+    return { dice: [...d.dice(pair), ...rest], combo: d.combo, bonusRoll: !!d.bonusRoll, choice: false };
   }
-  return { dice: faces.map(plain), combo: null, bonusRoll: false };
+  return { dice: faces.map(plain), combo: null, bonusRoll: false, choice: false };
 }
 
 // ---------- Legal actions ----------
@@ -347,12 +360,28 @@ export function roll(state: GameState, random: () => number = Math.random): Game
   if (state.phase !== 'roll') throw new Error('Not time to roll.');
   const count = state.settings.diceCount === 3 ? 3 : 2;
   const faces = Array.from({ length: count }, () => (Math.floor(random() * 6) + 1) as DieFace);
-  // Combos never chain off a bonus roll.
-  const built = buildDice(faces, state.settings.doubleCombos && !state.isBonusRoll);
+  const built = buildDice(faces, state.settings.doubleCombos);
+  // Combos apply on bonus rolls too, but a bonus roll never earns another one.
+  const capped = !!state.isBonusRoll && built.bonusRoll;
+  const combo = built.combo && capped ? { ...built.combo, text: `${built.combo.text.replace(/,? then roll again\.?/, '.')} (No extra roll: this is already a bonus roll.)` } : built.combo;
   const who = playerName(state.turn);
   const log = [...state.log, `${who} ${state.isBonusRoll ? 'bonus-rolled' : 'rolled'} ${faces.join(', ')}.`];
-  if (built.combo) log.push(`${built.combo.name}! ${built.combo.text}`);
-  return { ...state, phase: 'act', dice: built.dice, combo: built.combo, bonusRoll: built.bonusRoll, log };
+  if (combo) log.push(`${combo.name}! ${combo.text}`);
+  return { ...state, phase: 'act', dice: built.dice, combo, bonusRoll: built.bonusRoll && !capped, comboChoice: built.choice, log };
+}
+
+/** Mother lode: take the chosen double combo's dice. */
+export function chooseCombo(state: GameState, face: DieFace): GameState {
+  if (state.phase !== 'act' || !state.comboChoice) throw new Error('No combo to choose.');
+  if (!CHOOSABLE_COMBOS.includes(face)) throw new Error('That combo cannot be chosen.');
+  const pick = DOUBLE_COMBOS[face];
+  return {
+    ...state,
+    dice: pick.dice(face),
+    comboChoice: false,
+    combo: { name: `Mother lode: ${pick.combo.name}`, text: pick.combo.text.replace(/,? then roll again\.?/, '.'), tone: 'good' },
+    log: [...state.log, `${playerName(state.turn)} chose ${pick.combo.name}.`],
+  };
 }
 
 /** Apply an action without validation or turn bookkeeping. Used for previews too. */
@@ -404,7 +433,7 @@ function describe(action: Action, stacks: (Stack | null)[]): string {
 }
 
 export function applyAction(state: GameState, dieIndex: number, action: Action): GameState {
-  if (state.phase !== 'act') throw new Error('No dice to use.');
+  if (state.phase !== 'act' || state.comboChoice) throw new Error('No dice to use.');
   const die = state.dice[dieIndex];
   if (!die || die.used) throw new Error('That die is not available.');
   if (!allowedKinds(die).includes(action.kind)) throw new Error('That die does not allow this action.');
@@ -455,7 +484,7 @@ export function canPass(state: GameState, dieIndex: number): boolean {
 }
 
 export function skipDie(state: GameState, dieIndex: number): GameState {
-  if (state.phase !== 'act') throw new Error('No dice to skip.');
+  if (state.phase !== 'act' || state.comboChoice) throw new Error('No dice to skip.');
   const die = state.dice[dieIndex];
   if (!die || die.used) throw new Error('That die is not available.');
   if (!canPass(state, dieIndex)) throw new Error('This die is forced: it has a legal action.');
@@ -482,6 +511,7 @@ function settle(state: GameState): GameState {
         dice: [],
         combo: null,
         bonusRoll: false,
+        comboChoice: false,
         isBonusRoll: true,
         log: [...state.log, `${playerName(state.turn)} gets a bonus roll.`],
       };
@@ -495,6 +525,7 @@ function settle(state: GameState): GameState {
       dice: [],
       combo: null,
       bonusRoll: false,
+      comboChoice: false,
       isBonusRoll: false,
       log: [...state.log, `${playerName(turn)} to roll.`],
     };

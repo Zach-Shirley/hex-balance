@@ -7,6 +7,8 @@ import {
   DOUBLE_COMBOS,
   TRIPLE_COMBOS,
   CONVERT_MAX,
+  CHOOSABLE_COMBOS,
+  chooseCombo,
   applyAction,
   canPass,
   dieAction,
@@ -158,6 +160,8 @@ function resolveIntent(current: GameState, intent: Intent): GameState {
       return skipDie(current, intent.die);
     case 'new':
       return newGame(current.settings);
+    case 'choose':
+      return chooseCombo(current, intent.face);
   }
 }
 
@@ -486,6 +490,14 @@ function dicePanel(): string {
       ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>`
       : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`;
   }
+  if (state.comboChoice) {
+    const banner = state.combo ? `<div class="combo combo-good"><strong>${state.combo.name}!</strong> ${state.combo.text}</div>` : '';
+    if (!mine) return `${banner}<div class="waiting turn-${state.turn}">${playerName(state.turn)} is choosing a combo…</div>`;
+    return `${banner}<div class="combo-choice">${CHOOSABLE_COMBOS.map((f) => {
+      const c = DOUBLE_COMBOS[f].combo;
+      return `<button class="choice-btn tone-${c.tone}" data-choose="${f}">${dieFace(f)}<span><strong>${c.name}</strong><small>${c.text.replace(/,? then roll again\.?/, '.')}</small></span></button>`;
+    }).join('')}</div>`;
+  }
   const dice = state.dice
     .map((die, i) => {
       const meaning = dieAction(die);
@@ -521,6 +533,7 @@ function hint(): string {
   if (state.phase === 'over') return `Game over: the board tipped toward ${playerName(state.loser!)}. Start a new game to play again.`;
   if (!canAct()) return `${playerName(state.turn)} is playing. You'll see their moves here.`;
   if (state.phase === 'roll') return `${myColor() ? 'Your' : `${playerName(state.turn)}'s`} turn. Roll two dice; each die is one action.`;
+  if (state.comboChoice) return 'Mother lode: pick the double combo you want. You roll again after using it.';
   if (remainingDiceDead()) return 'No legal move for the remaining dice. Passing the turn…';
   if (selected !== null) {
     const kinds = [...new Set(playable().filter((p) => fromOf(p.action) === selected).map((p) => p.action.kind))];
@@ -658,7 +671,7 @@ function comboTable(): string {
   const doubles = faces.map((f) => row(DOUBLE_COMBOS[f], `${f}${f}`)).join('');
   const triples = state.settings.diceCount === 3 ? faces.map((f) => row(TRIPLE_COMBOS[f], `${f}${f}${f}`)).join('') : '';
   return `<h4>Combos</h4><table class="combos">${doubles}${triples}</table>
-    <p class="muted">Convert takes over an adjacent enemy stack of up to ${CONVERT_MAX}. Bonus rolls never trigger combos.</p>`;
+    <p class="muted">A pair is any two dice showing the same face, in any position. Convert takes over an adjacent enemy stack of up to ${CONVERT_MAX}. Combos work on bonus rolls too, but a bonus roll never earns another roll.</p>`;
 }
 
 function rulesPanel(): string {
@@ -751,6 +764,8 @@ app.addEventListener('click', (event) => {
     return leaveOnline();
   }
   if (act === 'end-turn') return canAct() && passRemaining();
+  const choose = el.closest<HTMLElement>('[data-choose]')?.dataset.choose;
+  if (choose && canAct() && state.comboChoice) return dispatch({ type: 'choose', face: Number(choose) as DieFace });
   if (act === 'copy') {
     if (canShare()) {
       navigator.share({ title: 'Hex Balance', text: 'Join my Hex Balance game', url: inviteLink() }).catch(() => undefined);

@@ -3,13 +3,14 @@
 // receives the full state after every change. Only one guest may be connected.
 
 import Peer, { type DataConnection } from 'peerjs';
-import type { Action, GameState } from './rules';
+import type { Action, DieFace, GameState } from './rules';
 
 export type Intent =
   | { type: 'roll' }
   | { type: 'act'; die: number; action: Action }
   | { type: 'pass'; die: number }
-  | { type: 'new' };
+  | { type: 'new' }
+  | { type: 'choose'; face: DieFace };
 
 type Message =
   | { type: 'state'; state: GameState }

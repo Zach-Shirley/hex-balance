@@ -46,8 +46,8 @@ Two themes, chosen per device in the **Style** panel: **Neon** (default; glowing
 
 Experiments in **Settings and experiments** (all off by default, saved with the game so both online players share them):
 
-- **Doubles combos**: 11 Snake eyes (three forced spawns), 22 Stampede (four moves), 33 Weld (two merges and a free move), 44 Convert (take over an adjacent enemy stack of up to 3), 55 Supply drop (three forced reinforcements), 66 Jackpot (two wilds and a bonus roll). Bonus rolls never trigger combos.
-- **Three dice**: roll three a turn. With combos on, a pair triggers its combo and the third die plays normally; three of a kind triggers a triple combo (111 Cave-in is five forced spawns; the others are the double plus a wild and a bonus roll).
+- **Doubles combos**: 11 Snake eyes (three forced spawns), 22 Stampede (four moves), 33 Weld (two merges and a free move), 44 Convert (take over an adjacent enemy stack of up to 3), 55 Supply drop (three forced reinforcements), 66 Jackpot (two wilds and a bonus roll). A pair is any two matching dice in the roll. Combos also apply on bonus rolls, but a bonus roll never earns another roll.
+- **Three dice**: roll three a turn. With combos on, a pair triggers its combo and the third die plays normally; three of a kind triggers a triple combo (111 Cave-in is five forced spawns; 666 Mother lode lets you pick any double combo and roll again; the others are the double plus a wild and a bonus roll).
 - **Piece limit**: cap on pieces per player on the board.
 
 Greedy-bot check (200 games each, cap 150 rounds):
