@@ -431,10 +431,10 @@ function updateShake() {
     lastShakeFrame = now;
     const r = balance(state).ratio;
     const severity = Math.min(1, Math.max(0, (Math.abs(r) - 0.8) / 0.2));
-    const amp = 0.03 + 0.03 * severity;
+    const amp = 0.02 + 0.02 * severity;
     const t = now / 1000;
     // A slow rock toward the drop with a fine tremor on top; never leans back past level.
-    const wave = 0.5 + 0.32 * Math.sin(t * 2 * Math.PI * 1.3) + 0.18 * Math.sin(t * 2 * Math.PI * 8.3);
+    const wave = 0.55 + 0.37 * Math.sin(t * 2 * Math.PI * 1.1) + 0.08 * Math.sin(t * 2 * Math.PI * 5.5);
     shakeLean = Math.sign(r) * amp * wave;
     drawBoard();
   };
