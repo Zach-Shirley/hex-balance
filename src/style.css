@@ -683,6 +683,7 @@ details summary {
 .result {
   position: absolute;
   inset: 0;
+  z-index: 20;
   display: grid;
   place-items: center;
   animation: fade-in 0.5s 0.6s both;
