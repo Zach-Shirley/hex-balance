@@ -111,9 +111,9 @@ const PALETTES: Record<Theme, Palette> = {
   },
   // Warm wrought iron and worn steel.
   forge: {
-    metal: [104, 94, 82],
+    metal: [80, 74, 68],
     plateSide: [82, 74, 64],
-    pieceSide: [200, 188, 168],
+    pieceSide: [172, 160, 142],
     plateStops: ['#4d4842', '#35312c', '#221f1b'],
     steelStops: ['#ece3d2', '#b6a991', '#7c6e5a'],
   },
@@ -140,6 +140,67 @@ function grain(): string {
     // no canvas (tests); the plate just renders without grain
   }
   return grainUrl;
+}
+
+/** Rust blotches, drips and pitting for forge metal, generated once in the browser. */
+let rustUrl: string | null = null;
+function rust(): string {
+  if (rustUrl !== null) return rustUrl;
+  rustUrl = '';
+  try {
+    const n = 160;
+    const c = document.createElement('canvas');
+    c.width = c.height = n;
+    const ctx = c.getContext('2d')!;
+    const tones = ['118,58,24', '92,48,24', '140,78,34', '60,36,22', '30,24,20'];
+    // Wrap blotches across edges so the tile repeats without seams.
+    const blot = (x: number, y: number, r: number, color: string, a: number) => {
+      for (const dx of [-n, 0, n]) {
+        for (const dy of [-n, 0, n]) {
+          const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
+          g.addColorStop(0, `rgba(${color},${a})`);
+          g.addColorStop(1, `rgba(${color},0)`);
+          ctx.fillStyle = g;
+          ctx.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
+        }
+      }
+    };
+    for (let i = 0; i < 26; i++) blot(Math.random() * n, Math.random() * n, 8 + Math.random() * 30, tones[i % tones.length], 0.18 + Math.random() * 0.35);
+    // Drips running down.
+    for (let i = 0; i < 14; i++) {
+      const x = Math.random() * n;
+      const y = Math.random() * n;
+      const len = 12 + Math.random() * 40;
+      const g = ctx.createLinearGradient(x, y, x, y + len);
+      g.addColorStop(0, 'rgba(110,56,24,0.45)');
+      g.addColorStop(1, 'rgba(110,56,24,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, 1 + Math.random() * 2, len);
+    }
+    // Pitting.
+    for (let i = 0; i < 900; i++) {
+      ctx.fillStyle = Math.random() < 0.7 ? `rgba(20,14,10,${0.2 + Math.random() * 0.4})` : `rgba(210,190,160,${0.1 + Math.random() * 0.2})`;
+      ctx.fillRect(Math.random() * n, Math.random() * n, 1, 1);
+    }
+    rustUrl = c.toDataURL();
+  } catch {
+    // no canvas (tests); metal renders clean
+  }
+  return rustUrl;
+}
+
+/** Texture and shading defs shared by both forge layers (ids are suffixed per layer). */
+function forgeDefs(suffix: string): string {
+  const g = grain();
+  const r = rust();
+  return `${g ? `<pattern id="grain${suffix}" width="96" height="96" patternUnits="userSpaceOnUse"><image href="${g}" width="96" height="96" /></pattern>` : ''}
+    ${r ? `<pattern id="rust${suffix}" width="160" height="160" patternUnits="userSpaceOnUse"><image href="${r}" width="160" height="160" /></pattern>` : ''}
+    <linearGradient id="soot${suffix}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#000" stop-opacity="0" /><stop offset="0.55" stop-color="#000" stop-opacity="0.18" /><stop offset="1" stop-color="#000" stop-opacity="0.6" />
+    </linearGradient>
+    <radialGradient id="vignette${suffix}" cx="0.5" cy="0.5" r="0.62">
+      <stop offset="0.55" stop-color="#000" stop-opacity="0" /><stop offset="1" stop-color="#000" stop-opacity="0.55" />
+    </radialGradient>`;
 }
 
 function shade(base: [number, number, number], light: number): string {
@@ -205,23 +266,67 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const shadow = [-1, 1].flatMap((sx) => [-1, 1].map((sy) => P([sx * (PLATE_HALF_W + 10), sy * 230, ground], false).p));
   out.push(`<polygon class="ground-shadow" points="${fmt([shadow[0], shadow[1], shadow[3], shadow[2]])}" />`);
 
-  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, cls: string) => {
+  const forge = view.theme === 'forge';
+  /** Grime layers over a metal face: grain, rust and (on vertical faces) soot pooling low. */
+  const grit = (pts: V2[], suffix: string, vertical: boolean, rustiness = 1) =>
+    forge
+      ? `<polygon class="grit" points="${fmt(pts)}" fill="url(#grain${suffix})" opacity="0.55" />` +
+        `<polygon class="grit" points="${fmt(pts)}" fill="url(#rust${suffix})" opacity="${(0.75 * rustiness).toFixed(2)}" />` +
+        (vertical ? `<polygon class="grit" points="${fmt(pts)}" fill="url(#soot${suffix})" />` : '')
+      : '';
+
+  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, cls: string, rustiness = 1) => {
     const faces: { pts: V2[]; depth: number; light: number }[] = [];
     const v = (x: number, y: number, z: number) => P([x, y, z], false);
     const quad = (a: V3, b: V3, c: V3, d: V3, light: number) => {
       const pp = [a, b, c, d].map((q) => v(...q));
       faces.push({ pts: pp.map((q) => q.p), depth: pp.reduce((s, q) => s + q.depth, 0) / 4, light });
     };
+    const top = faces.length;
     quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 1); // top
     quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], faceLight(0, 1, view.yaw)); // +y
     quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], faceLight(0, -1, view.yaw)); // -y
     quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], faceLight(-1, 0, view.yaw)); // -x
     quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], faceLight(1, 0, view.yaw)); // +x
+    const topFace = faces[top];
     faces.sort((a, b) => a.depth - b.depth);
-    return faces.map((f) => `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade(pal.metal, f.light)}" />`).join('');
+    return faces
+      .map((f) => {
+        const fill = `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade(pal.metal, f.light)}" />`;
+        // A worn, lighter lip on top faces so edges catch the light.
+        const lip = forge && f === topFace ? `<polygon class="edge-hi" points="${fmt(f.pts)}" />` : '';
+        return fill + grit(f.pts, '-u', f !== topFace, rustiness) + lip;
+      })
+      .join('');
   };
-  for (const sx of [-1, 1]) out.push(box(sx * pipeX - 9, sx * pipeX + 9, -16, 16, ground, pipeBot, 'stand'));
-  out.push(box(-pipeX - 14, pipeX + 14, -pipeA, pipeA, pipeBot, pipeTop, 'pipe'));
+  // Trestle stands: foot plate, post and a saddle clamped around the pipe.
+  const front = Math.cos(view.yaw) >= 0 ? 1 : -1; // which y face points at the camera
+  const bolt = (x: number, y: number, z: number) => {
+    const [bx, by] = P([x, y, z], false).p;
+    return forge ? `<circle class="bolt" cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="2.6" />` : '';
+  };
+  for (const sx of [-1, 1]) {
+    const cx = sx * pipeX;
+    out.push(box(cx - 22, cx + 22, -26, 26, ground, ground + 6, 'stand'));
+    out.push(box(cx - 7, cx + 7, -12, 12, ground + 6, pipeBot - 6, 'stand'));
+    out.push(bolt(cx - 15, front * 26, ground + 3) + bolt(cx + 15, front * 26, ground + 3));
+  }
+  out.push(box(-pipeX - 14, pipeX + 14, -pipeA, pipeA, pipeBot, pipeTop, 'pipe', 1.4));
+  if (forge) {
+    // Flanged end caps on the square tube.
+    for (const sx of [-1, 1]) out.push(box(sx * (pipeX + 14) - 2, sx * (pipeX + 14) + 2, -pipeA - 5, pipeA + 5, pipeBot - 5, pipeTop + 4, 'pipe flange', 1.2));
+    // A beaded weld seam along the near face of the square tube.
+    const seam = Array.from({ length: 40 }, (_, i) => {
+      const x = -pipeX - 10 + ((2 * pipeX + 20) * i) / 39;
+      return P([x, front * pipeA, (pipeBot + pipeTop) / 2], false).p;
+    });
+    out.push(`<polyline class="weld" points="${fmt(seam)}" />`);
+  }
+  for (const sx of [-1, 1]) {
+    const cx = sx * pipeX;
+    out.push(box(cx - 11, cx + 11, -pipeA - 4, pipeA + 4, pipeBot - 6, pipeTop - 1, 'stand saddle'));
+    out.push(bolt(cx - 6, front * (pipeA + 4), pipeBot - 2) + bolt(cx + 6, front * (pipeA + 4), pipeBot - 2));
+  }
   const under = out.splice(0, out.length);
 
   // Plate: side faces back-to-front, then the top face.
@@ -231,10 +336,14 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const [ex, ey] = [b[0] - a[0], b[1] - a[1]];
     return { pts: pts.map((q) => q.p), depth: pts.reduce((s, q) => s + q.depth, 0) / 4, light: faceLight(ey, -ex, view.yaw) };
   }).sort((a, b) => a.depth - b.depth);
-  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade(pal.plateSide, s.light)}" />`);
+  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade(pal.plateSide, s.light)}" />${grit(s.pts, '', true, 1.2)}`);
   const plateTop = fmt(PLATE.map(([x, y]) => P([x, y, 0]).p));
   out.push(`<polygon class="plate-top" points="${plateTop}" />`);
-  if (view.theme === 'forge' && grain()) out.push(`<polygon class="grain" points="${plateTop}" fill="url(#grain)" />`);
+  if (forge) {
+    out.push(`<polygon class="grain" points="${plateTop}" fill="url(#grain)" />`);
+    out.push(`<polygon class="grit" points="${plateTop}" fill="url(#rust)" opacity="0.38" />`);
+    out.push(`<polygon class="grit" points="${plateTop}" fill="url(#vignette)" />`);
+  }
 
   // Each player's half gets a coloured rim along the plate edge; the two rims meet at
   // the pointed ends, right over the pipe.
@@ -311,7 +420,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
           return `<line class="seam" x1="${p1[0].toFixed(1)}" y1="${p1[1].toFixed(1)}" x2="${p2[0].toFixed(1)}" y2="${p2[1].toFixed(1)}" />`;
         }).join('');
         return {
-          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade(pal.pieceSide, faceLight(mid[0], mid[1], view.yaw))}" />${seams}`,
+          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade(pal.pieceSide, faceLight(mid[0], mid[1], view.yaw))}" />${forge ? `<polygon class="grit" points="${fmt(pts.map((q) => q.p))}" fill="url(#soot)" opacity="0.8" />` : ''}${seams}`,
           depth: pts.reduce((s, q) => s + q.depth, 0) / 4,
         };
       })
@@ -326,7 +435,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const classes = ['stack', `owner-${stack.owner}`, view.sources.has(id) ? 'is-source' : '', view.from === id ? 'is-from' : '', target ? `is-target target-${target}` : '']
       .filter(Boolean)
       .join(' ');
-    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" /><polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
+    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" />${forge ? `<polygon class="grit" points="${top}" fill="url(#grain)" opacity="0.7" />` : ''}<polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
   }
 
   // Destination outlines drawn above everything, so a tall stack in front never hides
@@ -354,7 +463,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const viewBox = `${VIEWBOX.x.toFixed(0)} ${VIEWBOX.y.toFixed(0)} ${VIEWBOX.w.toFixed(0)} ${VIEWBOX.h.toFixed(0)}`;
 
   return {
-    under: `<svg class="board-under" viewBox="${viewBox}" aria-hidden="true">${under.join('')}</svg>`,
+    under: `<svg class="board-under" viewBox="${viewBox}" aria-hidden="true">${forge ? `<defs>${forgeDefs('-u')}</defs>` : ''}${under.join('')}</svg>`,
     board: `<svg class="board" viewBox="${viewBox}" role="img" aria-label="Hexagonal balance board">
     <defs>
       <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
@@ -363,7 +472,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
       <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0" stop-color="${pal.steelStops[0]}" /><stop offset="0.45" stop-color="${pal.steelStops[1]}" /><stop offset="1" stop-color="${pal.steelStops[2]}" />
       </linearGradient>
-      ${view.theme === 'forge' && grain() ? `<pattern id="grain" width="96" height="96" patternUnits="userSpaceOnUse"><image href="${grain()}" width="96" height="96" /></pattern>` : ''}
+      ${forge ? forgeDefs('') : ''}
     </defs>
     ${out.join('\n')}
   </svg>`,

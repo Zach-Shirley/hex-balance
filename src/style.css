@@ -1375,3 +1375,36 @@ summary,
   border-color: var(--brass);
   background: linear-gradient(180deg, #3a3027, #241e19);
 }
+
+/* Forge grit: textures, worn edges, bolts and the weld seam. */
+.grit {
+  pointer-events: none;
+}
+.edge-hi {
+  fill: none;
+  stroke: rgba(255, 226, 190, 0.22);
+  stroke-width: 1;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.bolt {
+  fill: #6f6354;
+  stroke: #17130f;
+  stroke-width: 1.2;
+}
+.weld {
+  fill: none;
+  stroke: #4e4034;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 1.5 2.2;
+  opacity: 0.9;
+}
+:root[data-theme="forge"] .pipe,
+:root[data-theme="forge"] .stand {
+  stroke: rgba(12, 9, 7, 0.9);
+  stroke-width: 1.1;
+}
+:root[data-theme="forge"] .grain {
+  opacity: 0.6;
+}
