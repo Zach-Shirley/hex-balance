@@ -11,7 +11,9 @@
   --accent: #e2364d;
   --radius: 16px;
   color-scheme: dark;
-  font-family: Inter, 'Segoe UI', system-ui, sans-serif;
+  --font: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
+  font-family: var(--font);
 }
 
 * {
@@ -915,4 +917,420 @@ details summary {
   .result-card {
     padding: 22px 26px;
   }
+}
+
+/* ======================================================================
+   Themes. Neon is the default (rules above plus the glow below);
+   Forge restyles the same elements as riveted 1880s mill iron.
+   Animations are shared by both themes.
+   ====================================================================== */
+
+h1,
+h3,
+h4,
+summary,
+.roll-btn,
+.result-card h2,
+.meter-label,
+.side-label {
+  font-family: var(--font-display);
+}
+
+.settings h4,
+.rules h4 {
+  margin: 16px 0 2px;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+
+/* Player rims replace the old dotted pivot line. */
+.pivot-line {
+  display: none;
+}
+.rim {
+  fill: none;
+  stroke-width: 4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.rim-red {
+  stroke: var(--red);
+}
+.rim-blue {
+  stroke: var(--blue);
+}
+
+/* Combo banner, experiment dice and the convert action. */
+:root {
+  --k-convert: #c48bff;
+}
+.k-convert {
+  color: var(--k-convert);
+}
+.die.kind-convert {
+  border-color: color-mix(in srgb, var(--k-convert) 60%, transparent);
+}
+.die.kind-convert .die-label {
+  color: var(--k-convert);
+}
+.target-hit.target-convert {
+  stroke: var(--k-convert);
+  stroke-dasharray: none;
+}
+.mark-convert circle {
+  fill: rgba(30, 14, 44, 0.9);
+  stroke: var(--k-convert);
+}
+.mark-convert path {
+  stroke: var(--k-convert);
+}
+.die.forced .die-status {
+  color: #ff8a8a;
+  font-weight: 700;
+}
+.die.bonus .die-status {
+  color: #ffd34d;
+  font-weight: 700;
+}
+.dice-row.dice-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+.dice-row.dice-3 .die,
+.dice-row.dice-many .die {
+  flex-direction: column;
+  text-align: center;
+  gap: 4px;
+  padding: 8px 4px;
+}
+.dice-row.dice-many {
+  grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+}
+.dice-row.dice-3 .die-face,
+.dice-row.dice-many .die-face {
+  width: 34px;
+  height: 34px;
+}
+.combo {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  border: 1px solid;
+  animation: combo-in 0.4s ease-out;
+}
+.combo-good {
+  color: #ffe08a;
+  border-color: rgba(255, 211, 77, 0.6);
+  background: rgba(255, 211, 77, 0.08);
+}
+.combo-bad {
+  color: #ff9a9a;
+  border-color: rgba(255, 90, 90, 0.6);
+  background: rgba(255, 60, 60, 0.08);
+}
+.combo-mixed {
+  color: #d9b8ff;
+  border-color: rgba(196, 139, 255, 0.6);
+  background: rgba(196, 139, 255, 0.08);
+}
+@keyframes combo-in {
+  from {
+    transform: scale(0.94);
+    opacity: 0;
+  }
+}
+.combos .tone-good {
+  color: #ffe08a;
+}
+.combos .tone-bad {
+  color: #ff9a9a;
+}
+.combos .tone-mixed {
+  color: #d9b8ff;
+}
+
+/* Theme picker. */
+.theme-panel h3 {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.theme-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.theme-opt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+}
+.theme-opt strong {
+  display: block;
+  font-size: 0.9rem;
+}
+.theme-opt small {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.theme-opt.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.swatch {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+}
+.swatch-neon {
+  background: linear-gradient(135deg, #ff4559 0 48%, #5ff2ff 52% 100%);
+}
+.swatch-forge {
+  background: linear-gradient(135deg, #b08d57, #4d4842 60%, #221f1b);
+}
+
+/* ---------- Neon ---------- */
+
+:root:not([data-theme="forge"]) .rim-red {
+  filter: drop-shadow(0 0 4px var(--red)) drop-shadow(0 0 12px var(--red-glow));
+}
+:root:not([data-theme="forge"]) .rim-blue {
+  filter: drop-shadow(0 0 4px var(--blue)) drop-shadow(0 0 12px var(--blue-glow));
+}
+:root:not([data-theme="forge"]) .slots {
+  filter: drop-shadow(0 0 2.5px rgba(95, 242, 255, 0.55));
+}
+:root:not([data-theme="forge"]) .slot-hex {
+  fill: #0c0e12;
+  stroke: rgba(95, 242, 255, 0.5);
+  stroke-width: 1.1;
+}
+:root:not([data-theme="forge"]) .plate-side {
+  stroke: rgba(95, 242, 255, 0.35);
+}
+:root:not([data-theme="forge"]) .plate-top {
+  stroke: rgba(95, 242, 255, 0.25);
+}
+:root:not([data-theme="forge"]) .pipe,
+:root:not([data-theme="forge"]) .stand {
+  stroke: rgba(95, 242, 255, 0.55);
+  stroke-width: 1;
+}
+:root:not([data-theme="forge"]) .owner-red .piece-side {
+  stroke: rgba(255, 69, 89, 0.85);
+  stroke-width: 1;
+}
+:root:not([data-theme="forge"]) .owner-blue .piece-side {
+  stroke: rgba(74, 168, 255, 0.85);
+  stroke-width: 1;
+}
+:root:not([data-theme="forge"]) .owner-red .seam {
+  stroke: rgba(255, 69, 89, 0.55);
+}
+:root:not([data-theme="forge"]) .owner-blue .seam {
+  stroke: rgba(74, 168, 255, 0.55);
+}
+:root:not([data-theme="forge"]) .panel {
+  box-shadow:
+    0 0 0 1px rgba(95, 242, 255, 0.05),
+    0 0 26px rgba(226, 54, 77, 0.07);
+}
+:root:not([data-theme="forge"]) .ghost-btn:hover,
+:root:not([data-theme="forge"]) .theme-opt:hover {
+  border-color: rgba(95, 242, 255, 0.6);
+  box-shadow: 0 0 12px rgba(95, 242, 255, 0.25);
+}
+:root:not([data-theme="forge"]) .meter-track {
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.6),
+    0 0 12px rgba(95, 242, 255, 0.2);
+}
+:root:not([data-theme="forge"]) .top h1 {
+  text-shadow: 0 0 12px rgba(226, 54, 77, 0.6);
+  letter-spacing: 0.1em;
+}
+
+/* ---------- Forge ---------- */
+
+:root[data-theme="forge"] {
+  --bg: #120e0b;
+  --panel: rgba(36, 30, 25, 0.95);
+  --panel-edge: rgba(176, 141, 87, 0.35);
+  --text: #eadfc8;
+  --muted: #a8977b;
+  --red: #c24a3c;
+  --red-glow: rgba(194, 74, 60, 0.45);
+  --blue: #4d7db5;
+  --blue-glow: rgba(77, 125, 181, 0.45);
+  --accent: #c9a25f;
+  --brass: #b08d57;
+  --radius: 6px;
+  --font: "Spectral", Georgia, serif;
+  --font-display: "Cinzel", Georgia, serif;
+  --k-move: #e7b955;
+  --k-spawn: #e7b955;
+  --k-merge: #7fb069;
+  --k-strike: #e07b39;
+  --k-reinforce: #8fc1c9;
+  --k-convert: #b591d6;
+}
+:root[data-theme="forge"],
+:root[data-theme="forge"] body {
+  background:
+    radial-gradient(ellipse at 50% 110%, rgba(214, 102, 30, 0.32), transparent 55%),
+    radial-gradient(ellipse at 15% 0%, rgba(120, 90, 60, 0.18), transparent 50%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 2px, transparent 2px 7px),
+    var(--bg);
+}
+:root[data-theme="forge"] .panel {
+  background: linear-gradient(180deg, #2b241e, #1d1915);
+  border: 1px solid var(--panel-edge);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 230, 190, 0.08),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.4),
+    0 6px 18px rgba(0, 0, 0, 0.5);
+  backdrop-filter: none;
+}
+:root[data-theme="forge"] .top h1 {
+  letter-spacing: 0.08em;
+  color: #e8d3a6;
+  text-shadow: 0 1px 0 #000, 0 0 18px rgba(214, 102, 30, 0.35);
+}
+:root[data-theme="forge"] .ghost-btn,
+:root[data-theme="forge"] .turn,
+:root[data-theme="forge"] .theme-opt {
+  border-radius: 4px;
+  border: 1px solid var(--brass);
+  background: linear-gradient(180deg, #3a3027, #241e19);
+  color: #ecd9b0;
+  box-shadow: inset 0 1px 0 rgba(255, 230, 190, 0.12);
+}
+:root[data-theme="forge"] .ghost-btn:hover,
+:root[data-theme="forge"] .theme-opt:hover {
+  background: linear-gradient(180deg, #4a3d30, #2c241d);
+}
+:root[data-theme="forge"] .roll-btn {
+  border-radius: 6px;
+  border: 2px solid var(--brass);
+  letter-spacing: 0.06em;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="forge"] .roll-btn.turn-red {
+  background: linear-gradient(180deg, #b44738, #7c2a20);
+  box-shadow: inset 0 1px 0 rgba(255, 200, 170, 0.3), 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme="forge"] .roll-btn.turn-blue {
+  background: linear-gradient(180deg, #4b78ad, #2a4a73);
+  box-shadow: inset 0 1px 0 rgba(200, 220, 255, 0.3), 0 4px 12px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme="forge"] .die {
+  border-radius: 6px;
+  background: linear-gradient(180deg, #2f2721, #201b17);
+}
+:root[data-theme="forge"] .die-face rect {
+  fill: #e9dfcb;
+  stroke: #7a6a50;
+  stroke-width: 3;
+}
+:root[data-theme="forge"] .combo,
+:root[data-theme="forge"] .settings input,
+:root[data-theme="forge"] .invite input {
+  border-radius: 4px;
+}
+:root[data-theme="forge"] .result-card {
+  border-radius: 6px;
+  background: linear-gradient(180deg, #2b241e, #17130f);
+  border: 2px solid var(--brass);
+}
+/* Meter as a brass gauge. */
+:root[data-theme="forge"] .meter-track {
+  border: 2px solid var(--brass);
+  border-radius: 4px;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.8);
+}
+:root[data-theme="forge"] .meter-danger {
+  border-radius: 0 !important;
+}
+:root[data-theme="forge"] .meter-marker {
+  border-radius: 3px;
+  background: linear-gradient(180deg, #e9cf91, #9c7a43);
+  border: 2px solid #3a2c18;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+}
+/* Board: painted rims, rivets, grain, matte steel. */
+:root[data-theme="forge"] .rim {
+  stroke-width: 7;
+  stroke-linecap: butt;
+  opacity: 0.9;
+}
+:root[data-theme="forge"] .rim-red {
+  stroke: #8f3428;
+}
+:root[data-theme="forge"] .rim-blue {
+  stroke: #2f5683;
+}
+:root[data-theme="forge"] .rivet {
+  fill: #8c8070;
+  stroke: #1e1a16;
+  stroke-width: 1;
+}
+:root[data-theme="forge"] .grain {
+  opacity: 0.5;
+  pointer-events: none;
+}
+:root[data-theme="forge"] .plate-top {
+  stroke: rgba(0, 0, 0, 0.6);
+  stroke-width: 1.5;
+}
+:root[data-theme="forge"] .plate-side,
+:root[data-theme="forge"] .pipe,
+:root[data-theme="forge"] .stand {
+  stroke: rgba(20, 16, 12, 0.8);
+}
+:root[data-theme="forge"] .slot-hex {
+  fill: #191613;
+  stroke: #6b6050;
+  stroke-width: 1.4;
+}
+:root[data-theme="forge"] .piece-top {
+  stroke-width: 3;
+}
+:root[data-theme="forge"] .owner-red .piece-top,
+:root[data-theme="forge"] .owner-blue .piece-top {
+  filter: none;
+}
+:root[data-theme="forge"] .owner-red .piece-top {
+  stroke: #a33d30;
+}
+:root[data-theme="forge"] .owner-blue .piece-top {
+  stroke: #36659a;
+}
+:root[data-theme="forge"] .owner-red .piece-side {
+  stroke: rgba(120, 50, 40, 0.7);
+}
+:root[data-theme="forge"] .owner-blue .piece-side {
+  stroke: rgba(50, 80, 120, 0.7);
+}
+:root[data-theme="forge"] .piece-count {
+  font-family: var(--font-display);
+  fill: #2a231b;
+}
+:root[data-theme="forge"] .ground-shadow {
+  fill: rgba(0, 0, 0, 0.6);
+}
+:root[data-theme="forge"] .theme-opt.active {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 10px rgba(201, 162, 95, 0.3);
 }

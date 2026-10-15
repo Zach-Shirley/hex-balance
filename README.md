@@ -40,6 +40,27 @@ npm run build   # typecheck + production bundle
 | Dice may be passed; used in any order | Assumed. Optional **Forced moves** setting (off by default): a die must be used if it has any legal move |
 | Tipping model and default weights | Assumed; see below |
 
+## Themes and experiments
+
+Two themes, chosen per device in the **Style** panel: **Neon** (default; glowing edges, coloured player rims) and **Forge** (riveted iron, grain, brass gauge, serif type).
+
+Experiments in **Settings and experiments** (all off by default, saved with the game so both online players share them):
+
+- **Doubles combos**: 11 Snake eyes (three forced spawns), 22 Stampede (four moves), 33 Weld (two merges and a free move), 44 Convert (take over an adjacent enemy stack of up to 3), 55 Supply drop (three forced reinforcements), 66 Jackpot (two wilds and a bonus roll). Bonus rolls never trigger combos.
+- **Three dice**: roll three a turn. With combos on, a pair triggers its combo and the third die plays normally; three of a kind triggers a triple combo (111 Cave-in is five forced spawns; the others are the double plus a wild and a bonus roll).
+- **Piece limit**: cap on pieces per player on the board.
+
+Greedy-bot check (200 games each, cap 150 rounds):
+
+| Mode | Games ended | Red wins | Median rounds |
+| --- | --- | --- | --- |
+| Baseline | 180 | 90 | 19 |
+| Doubles combos | 199 | 103 | 12 |
+| Three dice | 192 | 99 | 13 |
+| Three dice + combos | 200 | 120 | 5 |
+| Piece limit 15 | 158 | 78 | 20 |
+| Combos + forced moves | 200 | 95 | 6 |
+
 ## Weight model
 
 Each piece weighs 1. A stack's torque is its piece count × its distance from the pipe in cell heights; Red's half is negative and Blue's is positive. The plate rests on the flat top of a square pipe, so it tips once the combined centre of mass passes the pipe's edge:

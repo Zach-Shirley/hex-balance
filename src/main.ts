@@ -4,7 +4,12 @@ import {
   ACTION_LABELS,
   DEFAULT_SETTINGS,
   DIE_ACTIONS,
+  DOUBLE_COMBOS,
+  TRIPLE_COMBOS,
+  CONVERT_MAX,
   applyAction,
+  canPass,
+  dieAction,
   balance,
   dieIsPlayable,
   newGame,
@@ -22,7 +27,7 @@ import {
   type Player,
   type Settings,
 } from './rules';
-import { renderBoard } from './view3d';
+import { renderBoard, type Theme } from './view3d';
 import { GuestSession, HostSession, newRoomCode, type Intent, type NetStatus } from './net';
 
 // ---------- State ----------
@@ -45,6 +50,29 @@ let viewYaw = 0;
 let targetYaw = 0;
 let yawAnim: number | null = null;
 const flipped = () => Math.cos(targetYaw) < 0;
+
+/** Visual theme; a per-device preference, not part of the game state. */
+let theme: Theme = loadTheme();
+
+function loadTheme(): Theme {
+  try {
+    return localStorage.getItem('hex-balance-theme') === 'forge' ? 'forge' : 'neon';
+  } catch {
+    return 'neon';
+  }
+}
+
+function setTheme(next: Theme) {
+  theme = next;
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem('hex-balance-theme', next);
+  } catch {
+    // preference lasts for this visit only
+  }
+  render();
+}
+document.documentElement.dataset.theme = theme;
 
 const myColor = (): Player | null => (online.mode === 'host' ? 'red' : online.mode === 'guest' ? 'blue' : null);
 const canAct = () => state.phase !== 'over' && (myColor() === null || state.turn === myColor());
@@ -339,6 +367,7 @@ function drawBoard() {
     pipeHalfWidth: state.settings.pipeHalfWidth,
     lean: shownLean + shakeLean,
     yaw: viewYaw,
+    theme,
     sources: hints.sources,
     targets: hints.targets,
     from: selected,
@@ -454,25 +483,29 @@ function dicePanel(): string {
   const mine = canAct();
   if (state.phase === 'roll') {
     return mine
-      ? `<button class="roll-btn turn-${state.turn}" data-act="roll">Roll dice <kbd>Space</kbd></button>`
+      ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>`
       : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`;
   }
   const dice = state.dice
     .map((die, i) => {
-      const meaning = DIE_ACTIONS[die.face];
+      const meaning = dieAction(die);
       const dead = !die.used && !dieIsPlayable(state, i);
-      const status = die.used ? 'used' : dead ? 'no legal move' : 'available';
-      return `<div class="die ${die.used ? 'used' : ''} ${dead ? 'dead' : ''} kind-${meaning}">
+      const status = die.used ? 'used' : dead ? 'no legal move' : die.forced ? 'forced' : die.bonus ? 'bonus' : 'available';
+      return `<div class="die ${die.used ? 'used' : ''} ${dead ? 'dead' : ''} ${die.forced ? 'forced' : ''} ${die.bonus ? 'bonus' : ''} kind-${meaning}">
         ${dieFace(die.face)}
         <span class="die-text"><span class="die-label">${meaning === 'wild' ? 'Wild' : ACTION_LABELS[meaning]}</span><span class="die-status">${status}</span></span>
       </div>`;
     })
     .join('');
+  const unused = state.dice.flatMap((d, i) => (d.used ? [] : [i]));
   const endTurn =
-    mine && !state.settings.forcedMoves && !remainingDiceDead()
+    mine && !remainingDiceDead() && unused.every((i) => canPass(state, i))
       ? `<button class="ghost-btn end-turn" data-act="end-turn">End turn</button>`
       : '';
-  return `<div class="dice-row">${dice}</div>${inPlaceButtons()}${endTurn}`;
+  const banner = state.combo
+    ? `<div class="combo combo-${state.combo.tone}"><strong>${state.combo.name}!</strong> ${state.combo.text}</div>`
+    : '';
+  return `${banner}<div class="dice-row dice-${state.dice.length > 3 ? 'many' : state.dice.length}">${dice}</div>${inPlaceButtons()}${endTurn}`;
 }
 
 const KIND_WORD: Record<ActionKind, string> = {
@@ -481,6 +514,7 @@ const KIND_WORD: Record<ActionKind, string> = {
   merge: '<span class="k-merge">merge</span>',
   strike: '<span class="k-strike">✕ strike</span>',
   reinforce: '<span class="k-reinforce">+1 reinforce</span>',
+  convert: '<span class="k-convert">⟳ convert</span>',
 };
 
 function hint(): string {
@@ -585,19 +619,46 @@ function onlinePanel(): string {
   </div>`;
 }
 
+function themePanel(): string {
+  const opt = (id: Theme, name: string, blurb: string) =>
+    `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
+  return `<div class="panel theme-panel">
+    <h3>Style</h3>
+    <div class="theme-row">${opt('neon', 'Neon', 'Glowing edges, arcade night')}${opt('forge', 'Forge', 'Riveted iron, 1880s mill')}</div>
+  </div>`;
+}
+
 function settingsPanel(): string {
   if (online.mode === 'guest') return '';
   const s = state.settings;
   const edgePieces = Math.ceil((s.pipeHalfWidth * s.boardMass) / (3.5 - s.pipeHalfWidth));
+  const check = (name: string, on: boolean, label: string) =>
+    `<label class="check"><input type="checkbox" name="${name}" ${on ? 'checked' : ''} /><span>${label}</span></label>`;
   return `<details class="panel settings">
-    <summary>Weight settings</summary>
+    <summary>Settings and experiments</summary>
+    <h4>Weight</h4>
     <label>Plate mass <span>(piece-weights)</span><input type="number" name="boardMass" min="0" step="5" value="${s.boardMass}" /></label>
     <label>Pipe half-width <span>(cell heights)</span><input type="number" name="pipeHalfWidth" min="0.05" step="0.05" value="${s.pipeHalfWidth}" /></label>
     <label>Starting pieces per spawn slot<input type="number" name="startingPieces" min="0" max="5" step="1" value="${s.startingPieces}" /></label>
-    <label class="check"><input type="checkbox" name="forcedMoves" ${s.forcedMoves ? 'checked' : ''} /><span><strong>Forced moves</strong>: you must use every die that has a legal move, even a bad one (no End turn button)</span></label>
     <p class="muted">With these values, about ${edgePieces} unopposed pieces on a far edge tip the board.</p>
+    <h4>Rules</h4>
+    ${check('forcedMoves', s.forcedMoves, '<strong>Forced moves</strong>: you must use every die that has a legal move, even a bad one')}
+    <h4>Experiments</h4>
+    ${check('doubleCombos', s.doubleCombos, '<strong>Doubles combos</strong>: matching dice trigger a combo (see Rules)')}
+    ${check('threeDice', s.diceCount === 3, '<strong>Three dice</strong>: roll three dice a turn; with combos on, three of a kind is a triple combo')}
+    <label>Piece limit per player <span>(0 = no limit)</span><input type="number" name="pieceLimit" min="0" max="99" step="1" value="${s.pieceLimit}" /></label>
     <button class="ghost-btn" data-act="apply-settings">Apply and restart</button>
   </details>`;
+}
+
+function comboTable(): string {
+  const row = (c: { combo: { name: string; text: string; tone: string } }, dice: string) =>
+    `<tr><td>${dice}</td><td class="tone-${c.combo.tone}">${c.combo.name}</td><td>${c.combo.text}</td></tr>`;
+  const faces = [1, 2, 3, 4, 5, 6] as DieFace[];
+  const doubles = faces.map((f) => row(DOUBLE_COMBOS[f], `${f}${f}`)).join('');
+  const triples = state.settings.diceCount === 3 ? faces.map((f) => row(TRIPLE_COMBOS[f], `${f}${f}${f}`)).join('') : '';
+  return `<h4>Combos</h4><table class="combos">${doubles}${triples}</table>
+    <p class="muted">Convert takes over an adjacent enemy stack of up to ${CONVERT_MAX}. Bonus rolls never trigger combos.</p>`;
 }
 
 function rulesPanel(): string {
@@ -611,7 +672,9 @@ function rulesPanel(): string {
     <summary>Rules</summary>
     <p>The plate balances on a square pipe across its middle. Each player owns the half on their side of the pipe, with three spawn slots on its outer edge. Weight far from the pipe counts more. If the board tips toward you, you lose — so push your stacks onto your opponent's side.</p>
     <table>${rows}</table>
-    <p class="muted">Each turn roll two dice; each die is one action, used in any order. Tap a stack to pick it up and see where it can go, or tap a spawn slot to spawn. Dice with no legal move are skipped automatically. Enemy stacks block movement, and an enemy stack on your spawn slot stops you spawning there. The board can tip after any action, including toward the player who moved.</p>
+    ${state.settings.doubleCombos ? comboTable() : ''}
+    ${state.settings.pieceLimit > 0 ? `<p class="muted">Piece limit: each player may have at most ${state.settings.pieceLimit} pieces on the board. Spawn and reinforce stop at the cap.</p>` : ''}
+    <p class="muted">Each turn roll ${state.settings.diceCount === 3 ? 'three' : 'two'} dice; each die is one action, used in any order. Tap a stack to pick it up and see where it can go, or tap a spawn slot to spawn. Dice with no legal move are skipped automatically. Enemy stacks block movement, and an enemy stack on your spawn slot stops you spawning there. The board can tip after any action, including toward the player who moved.</p>
   </details>`;
 }
 
@@ -652,6 +715,7 @@ function render() {
           <p class="hint">${hint()}</p>
         </div>
         ${onlinePanel()}
+        ${themePanel()}
         <div class="panel log"><h3>Log</h3><ol>${state.log
           .slice(-14)
           .reverse()
@@ -679,6 +743,8 @@ app.addEventListener('click', (event) => {
     return dispatch({ type: 'new' });
   }
   if (act === 'rotate') return rotateView();
+  const pick = el.closest<HTMLElement>('[data-theme-pick]')?.dataset.themePick;
+  if (pick === 'neon' || pick === 'forge') return setTheme(pick);
   if (act === 'host') return startHost();
   if (act === 'leave') {
     if (gameInProgress() && !confirm('Leave the online game? The current game will end.')) return;
@@ -701,6 +767,9 @@ app.addEventListener('click', (event) => {
       pipeHalfWidth: Math.max(0.05, read('pipeHalfWidth') || DEFAULT_SETTINGS.pipeHalfWidth),
       startingPieces: Math.max(0, Math.min(5, Math.round(read('startingPieces') || 0))),
       forcedMoves: app.querySelector<HTMLInputElement>('input[name="forcedMoves"]')!.checked,
+      doubleCombos: app.querySelector<HTMLInputElement>('input[name="doubleCombos"]')!.checked,
+      diceCount: app.querySelector<HTMLInputElement>('input[name="threeDice"]')!.checked ? 3 : 2,
+      pieceLimit: Math.max(0, Math.min(99, Math.round(read('pieceLimit') || 0))),
     };
     saveSettings(settings);
     return setState(newGame(settings));

@@ -7,11 +7,12 @@ export interface Stack {
   count: number;
 }
 
-export type ActionKind = 'spawn' | 'move' | 'merge' | 'strike' | 'reinforce';
+export type ActionKind = 'spawn' | 'move' | 'merge' | 'strike' | 'reinforce' | 'convert';
 export type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
+export type DieAction = ActionKind | 'wild';
 
-/** Recovered die meanings. 4 (strike) is a best guess; 6 is wild. */
-export const DIE_ACTIONS: Record<DieFace, ActionKind | 'wild'> = {
+/** Recovered die meanings. 4 (strike) is a best guess; 6 is wild. Convert only comes from combos. */
+export const DIE_ACTIONS: Record<DieFace, DieAction> = {
   1: 'spawn',
   2: 'move',
   3: 'merge',
@@ -26,6 +27,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   merge: 'Merge',
   strike: 'Strike',
   reinforce: 'Reinforce',
+  convert: 'Convert',
 };
 
 export const ACTION_HELP: Record<ActionKind, string> = {
@@ -34,14 +36,21 @@ export const ACTION_HELP: Record<ActionKind, string> = {
   merge: 'Move one of your stacks onto an adjacent stack of yours. They combine.',
   strike: 'One of your stacks knocks one piece off an adjacent enemy stack.',
   reinforce: 'Add one piece to any stack you control.',
+  convert: `Take over an adjacent enemy stack of up to ${3} pieces. It becomes yours where it stands.`,
 };
+
+/** Wild dice offer the five basic actions; convert is never wild. */
+const WILD_KINDS: ActionKind[] = ['spawn', 'move', 'merge', 'strike', 'reinforce'];
+/** Largest enemy stack a convert can take over. */
+export const CONVERT_MAX = 3;
 
 export type Action =
   | { kind: 'spawn'; to: number }
   | { kind: 'move'; from: number; to: number; jump: boolean }
   | { kind: 'merge'; from: number; to: number }
   | { kind: 'strike'; from: number; to: number }
-  | { kind: 'reinforce'; to: number };
+  | { kind: 'reinforce'; to: number }
+  | { kind: 'convert'; from: number; to: number };
 
 export interface Settings {
   /** Mass of the steel plate, in piece-weights. */
@@ -52,6 +61,12 @@ export interface Settings {
   startingPieces: number;
   /** When on, a die must be used if it has any legal action; passing is only for dead dice. */
   forcedMoves: boolean;
+  /** Experiment: doubles (and triples) trigger combos. */
+  doubleCombos: boolean;
+  /** Experiment: roll this many dice each turn (2 or 3). */
+  diceCount: number;
+  /** Experiment: most pieces a player may have on the board at once (0 = no limit). */
+  pieceLimit: number;
 }
 
 // Rough physical estimate: ~3 cm cells, 1 cm plate, 0.5 cm pieces and a
@@ -64,11 +79,26 @@ export const DEFAULT_SETTINGS: Settings = {
   pipeHalfWidth: 0.25,
   startingPieces: 1,
   forcedMoves: false,
+  doubleCombos: false,
+  diceCount: 2,
+  pieceLimit: 0,
 };
 
 export interface Die {
   face: DieFace;
   used: boolean;
+  /** Overrides the face's normal action (set by combos). */
+  action?: DieAction;
+  /** Must be used if it has any legal move, whatever the forced-moves setting says. */
+  forced?: boolean;
+  /** Extra die granted by a combo. */
+  bonus?: boolean;
+}
+
+export interface Combo {
+  name: string;
+  text: string;
+  tone: 'good' | 'bad' | 'mixed';
 }
 
 export interface GameState {
@@ -80,6 +110,12 @@ export interface GameState {
   dice: Die[];
   loser: Player | null;
   log: string[];
+  /** The combo triggered by the current roll, if any. */
+  combo?: Combo | null;
+  /** After these dice are used, the same player rolls again. */
+  bonusRoll?: boolean;
+  /** The current roll is a bonus roll (combos cannot chain). */
+  isBonusRoll?: boolean;
 }
 
 export const other = (player: Player): Player => (player === 'red' ? 'blue' : 'red');
@@ -101,6 +137,9 @@ export function newGame(settings: Settings = DEFAULT_SETTINGS): GameState {
     dice: [],
     loser: null,
     log: ['Red to roll.'],
+    combo: null,
+    bonusRoll: false,
+    isBonusRoll: false,
   };
 }
 
@@ -140,24 +179,120 @@ export function tippedToward(state: Pick<GameState, 'stacks' | 'settings'>): Pla
   return null;
 }
 
-// ---------- Legal actions ----------
-
-export function allowedKinds(face: DieFace): ActionKind[] {
-  const meaning = DIE_ACTIONS[face];
-  return meaning === 'wild' ? ['spawn', 'move', 'merge', 'strike', 'reinforce'] : [meaning];
+export function piecesOf(state: Pick<GameState, 'stacks'>, player: Player): number {
+  return state.stacks.reduce((sum, s) => sum + (s?.owner === player ? s.count : 0), 0);
 }
+
+// ---------- Dice and combos ----------
+
+export const dieAction = (die: Pick<Die, 'face' | 'action'>): DieAction => die.action ?? DIE_ACTIONS[die.face];
+
+export function allowedKinds(die: Pick<Die, 'face' | 'action'>): ActionKind[] {
+  const meaning = dieAction(die);
+  return meaning === 'wild' ? WILD_KINDS : [meaning];
+}
+
+const make = (face: DieFace, action: DieAction, extra: Partial<Die> = {}): Die => ({ face, used: false, action, ...extra });
+
+/** What a pair of matching dice turns into when combos are on. */
+export const DOUBLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) => Die[]; bonusRoll?: boolean }> = {
+  1: {
+    combo: { name: 'Snake eyes', text: 'Three forced spawns on your own edge.', tone: 'bad' },
+    dice: (f) => [make(f, 'spawn', { forced: true }), make(f, 'spawn', { forced: true }), make(f, 'spawn', { forced: true, bonus: true })],
+  },
+  2: {
+    combo: { name: 'Stampede', text: 'Four moves.', tone: 'good' },
+    dice: (f) => [make(f, 'move'), make(f, 'move'), make(f, 'move', { bonus: true }), make(f, 'move', { bonus: true })],
+  },
+  3: {
+    combo: { name: 'Weld', text: 'Two merges and a free move.', tone: 'good' },
+    dice: (f) => [make(f, 'merge'), make(f, 'merge'), make(f, 'move', { bonus: true })],
+  },
+  4: {
+    combo: { name: 'Convert', text: `Both strikes become one convert: take over an adjacent enemy stack of up to ${CONVERT_MAX}.`, tone: 'mixed' },
+    dice: (f) => [make(f, 'convert')],
+  },
+  5: {
+    combo: { name: 'Supply drop', text: 'Three reinforcements, and you must use them all.', tone: 'mixed' },
+    dice: (f) => [make(f, 'reinforce', { forced: true }), make(f, 'reinforce', { forced: true }), make(f, 'reinforce', { forced: true, bonus: true })],
+  },
+  6: {
+    combo: { name: 'Jackpot', text: 'Two wilds, then roll again.', tone: 'good' },
+    dice: (f) => [make(f, 'wild'), make(f, 'wild')],
+    bonusRoll: true,
+  },
+};
+
+/** Three of a kind (three-dice mode with combos on). */
+export const TRIPLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) => Die[]; bonusRoll?: boolean }> = {
+  1: {
+    combo: { name: 'Cave-in', text: 'Five forced spawns on your own edge. Brace yourself.', tone: 'bad' },
+    dice: (f) => Array.from({ length: 5 }, (_, i) => make(f, 'spawn', { forced: true, bonus: i > 2 })),
+  },
+  2: {
+    combo: { name: 'Cavalry charge', text: 'Four moves and a wild, then roll again.', tone: 'good' },
+    dice: (f) => [...DOUBLE_COMBOS[2].dice(f), make(f, 'wild', { bonus: true })],
+    bonusRoll: true,
+  },
+  3: {
+    combo: { name: 'Forge', text: 'Two merges, a free move and a wild, then roll again.', tone: 'good' },
+    dice: (f) => [...DOUBLE_COMBOS[3].dice(f), make(f, 'wild', { bonus: true })],
+    bonusRoll: true,
+  },
+  4: {
+    combo: { name: 'Uprising', text: 'Two converts, then roll again.', tone: 'good' },
+    dice: (f) => [make(f, 'convert'), make(f, 'convert', { bonus: true })],
+    bonusRoll: true,
+  },
+  5: {
+    combo: { name: 'Fortify', text: 'Three forced reinforcements and a wild, then roll again.', tone: 'mixed' },
+    dice: (f) => [...DOUBLE_COMBOS[5].dice(f), make(f, 'wild', { bonus: true })],
+    bonusRoll: true,
+  },
+  6: {
+    combo: { name: 'Mother lode', text: 'Three wilds, then roll again.', tone: 'good' },
+    dice: (f) => [make(f, 'wild'), make(f, 'wild'), make(f, 'wild')],
+    bonusRoll: true,
+  },
+};
+
+/** Turn rolled faces into the dice a player actually gets, applying combos. */
+export function buildDice(faces: DieFace[], combos: boolean): { dice: Die[]; combo: Combo | null; bonusRoll: boolean } {
+  const plain = (f: DieFace): Die => ({ face: f, used: false });
+  if (!combos) return { dice: faces.map(plain), combo: null, bonusRoll: false };
+  const counts = new Map<DieFace, number>();
+  for (const f of faces) counts.set(f, (counts.get(f) ?? 0) + 1);
+  const triple = [...counts].find(([, n]) => n >= 3)?.[0];
+  if (triple) {
+    const t = TRIPLE_COMBOS[triple];
+    return { dice: t.dice(triple), combo: t.combo, bonusRoll: !!t.bonusRoll };
+  }
+  const pair = [...counts].find(([, n]) => n === 2)?.[0];
+  if (pair) {
+    const d = DOUBLE_COMBOS[pair];
+    const rest = faces.filter((f) => f !== pair).map(plain);
+    return { dice: [...d.dice(pair), ...rest], combo: d.combo, bonusRoll: !!d.bonusRoll };
+  }
+  return { dice: faces.map(plain), combo: null, bonusRoll: false };
+}
+
+// ---------- Legal actions ----------
 
 export function legalActions(state: GameState, kind: ActionKind): Action[] {
   const me = state.turn;
   const { stacks } = state;
   const mine = stacks.flatMap((stack, id) => (stack?.owner === me ? [id] : []));
+  const limit = state.settings.pieceLimit > 0 ? state.settings.pieceLimit : Infinity;
+  const room = limit - piecesOf(state, me);
   const actions: Action[] = [];
 
   switch (kind) {
     case 'spawn':
+      if (room < 1) break;
       for (const id of SPAWNS[me]) if (!stacks[id] || stacks[id]!.owner === me) actions.push({ kind, to: id });
       break;
     case 'reinforce':
+      if (room < 1) break;
       for (const id of mine) actions.push({ kind, to: id });
       break;
     case 'move':
@@ -184,6 +319,16 @@ export function legalActions(state: GameState, kind: ActionKind): Action[] {
         for (const to of neighbors(from)) if (stacks[to] && stacks[to]!.owner !== me) actions.push({ kind, from, to });
       }
       break;
+    case 'convert':
+      for (const from of mine) {
+        for (const to of neighbors(from)) {
+          const t = stacks[to];
+          if (t && t.owner !== me && t.count <= CONVERT_MAX && t.count <= room && !actions.some((a) => a.to === to)) {
+            actions.push({ kind, from, to });
+          }
+        }
+      }
+      break;
   }
   return actions;
 }
@@ -200,17 +345,14 @@ export function sameAction(a: Action, b: Action): boolean {
 
 export function roll(state: GameState, random: () => number = Math.random): GameState {
   if (state.phase !== 'roll') throw new Error('Not time to roll.');
-  const face = () => (Math.floor(random() * 6) + 1) as DieFace;
-  const dice: Die[] = [
-    { face: face(), used: false },
-    { face: face(), used: false },
-  ];
-  return {
-    ...state,
-    phase: 'act',
-    dice,
-    log: [...state.log, `${playerName(state.turn)} rolled ${dice[0].face} and ${dice[1].face}.`],
-  };
+  const count = state.settings.diceCount === 3 ? 3 : 2;
+  const faces = Array.from({ length: count }, () => (Math.floor(random() * 6) + 1) as DieFace);
+  // Combos never chain off a bonus roll.
+  const built = buildDice(faces, state.settings.doubleCombos && !state.isBonusRoll);
+  const who = playerName(state.turn);
+  const log = [...state.log, `${who} ${state.isBonusRoll ? 'bonus-rolled' : 'rolled'} ${faces.join(', ')}.`];
+  if (built.combo) log.push(`${built.combo.name}! ${built.combo.text}`);
+  return { ...state, phase: 'act', dice: built.dice, combo: built.combo, bonusRoll: built.bonusRoll, log };
 }
 
 /** Apply an action without validation or turn bookkeeping. Used for previews too. */
@@ -236,6 +378,9 @@ export function resolveStacks(stacks: (Stack | null)[], player: Player, action: 
       next[action.to] = target.count > 1 ? { ...target, count: target.count - 1 } : null;
       break;
     }
+    case 'convert':
+      next[action.to] = { ...next[action.to]!, owner: player };
+      break;
   }
   return next;
 }
@@ -253,6 +398,8 @@ function describe(action: Action, stacks: (Stack | null)[]): string {
       return `merged into a stack of ${size(action.to) + size(action.from)}`;
     case 'strike':
       return size(action.to) > 1 ? `struck an enemy stack down to ${size(action.to) - 1}` : 'knocked out an enemy piece';
+    case 'convert':
+      return `converted an enemy stack of ${size(action.to)}`;
   }
 }
 
@@ -260,7 +407,7 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
   if (state.phase !== 'act') throw new Error('No dice to use.');
   const die = state.dice[dieIndex];
   if (!die || die.used) throw new Error('That die is not available.');
-  if (!allowedKinds(die.face).includes(action.kind)) throw new Error('That die does not allow this action.');
+  if (!allowedKinds(die).includes(action.kind)) throw new Error('That die does not allow this action.');
   if (!legalActions(state, action.kind).some((legal) => sameAction(legal, action))) throw new Error('Illegal action.');
 
   const stacks = resolveStacks(state.stacks, state.turn, action);
@@ -272,7 +419,7 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
 /** Whether a die has any legal action for the player to move. */
 export function dieIsPlayable(state: GameState, dieIndex: number): boolean {
   const die = state.dice[dieIndex];
-  return !!die && allowedKinds(die.face).some((kind) => legalActions(state, kind).length > 0);
+  return !!die && allowedKinds(die).some((kind) => legalActions(state, kind).length > 0);
 }
 
 export interface PlayableAction {
@@ -282,17 +429,18 @@ export interface PlayableAction {
 
 /**
  * Every action the current player can take with any unused die. Each action appears
- * once; when several dice allow it, the specific die is preferred over a wild one.
+ * once; forced dice are spent first, and a specific die is preferred over a wild one.
  */
 export function playableActions(state: GameState): PlayableAction[] {
   if (state.phase !== 'act') return [];
+  const rank = (d: Die) => (d.forced ? 0 : dieAction(d) === 'wild' ? 2 : 1);
   const order = state.dice
     .map((die, i) => ({ die, i }))
     .filter(({ die }) => !die.used)
-    .sort((a, b) => Number(DIE_ACTIONS[a.die.face] === 'wild') - Number(DIE_ACTIONS[b.die.face] === 'wild'));
+    .sort((a, b) => rank(a.die) - rank(b.die));
   const out: PlayableAction[] = [];
   for (const { die, i } of order) {
-    for (const kind of allowedKinds(die.face)) {
+    for (const kind of allowedKinds(die)) {
       for (const action of legalActions(state, kind)) {
         if (!out.some((p) => sameAction(p.action, action))) out.push({ die: i, action });
       }
@@ -302,14 +450,15 @@ export function playableActions(state: GameState): PlayableAction[] {
 }
 
 export function canPass(state: GameState, dieIndex: number): boolean {
-  return !state.settings.forcedMoves || !dieIsPlayable(state, dieIndex);
+  const forced = state.settings.forcedMoves || !!state.dice[dieIndex]?.forced;
+  return !forced || !dieIsPlayable(state, dieIndex);
 }
 
 export function skipDie(state: GameState, dieIndex: number): GameState {
   if (state.phase !== 'act') throw new Error('No dice to skip.');
   const die = state.dice[dieIndex];
   if (!die || die.used) throw new Error('That die is not available.');
-  if (!canPass(state, dieIndex)) throw new Error('Forced moves are on: this die has a legal action.');
+  if (!canPass(state, dieIndex)) throw new Error('This die is forced: it has a legal action.');
   const dice = state.dice.map((d, i) => (i === dieIndex ? { ...d, used: true } : d));
   const note = dieIsPlayable(state, dieIndex) ? `passed on a ${die.face}` : `had no legal move for a ${die.face}`;
   return settle({ ...state, dice, log: [...state.log, `${playerName(state.turn)} ${note}.`] });
@@ -326,6 +475,17 @@ function settle(state: GameState): GameState {
     };
   }
   if (state.dice.every((d) => d.used)) {
+    if (state.bonusRoll) {
+      return {
+        ...state,
+        phase: 'roll',
+        dice: [],
+        combo: null,
+        bonusRoll: false,
+        isBonusRoll: true,
+        log: [...state.log, `${playerName(state.turn)} gets a bonus roll.`],
+      };
+    }
     const turn = other(state.turn);
     return {
       ...state,
@@ -333,6 +493,9 @@ function settle(state: GameState): GameState {
       turnNumber: turn === 'red' ? state.turnNumber + 1 : state.turnNumber,
       phase: 'roll',
       dice: [],
+      combo: null,
+      bonusRoll: false,
+      isBonusRoll: false,
       log: [...state.log, `${playerName(turn)} to roll.`],
     };
   }

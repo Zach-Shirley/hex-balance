@@ -89,6 +89,59 @@ function project([x, y, z]: V3, cam: Camera, leans = true): { p: V2; depth: numb
 
 const fmt = (pts: V2[]) => pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
 
+export type Theme = 'neon' | 'forge';
+type RGB = [number, number, number];
+
+interface Palette {
+  metal: RGB; // pipe and stands
+  plateSide: RGB;
+  pieceSide: RGB;
+  plateStops: [string, string, string];
+  steelStops: [string, string, string];
+}
+
+const PALETTES: Record<Theme, Palette> = {
+  // Dark gunmetal so the glowing edges carry the look.
+  neon: {
+    metal: [74, 82, 98],
+    plateSide: [38, 42, 54],
+    pieceSide: [150, 160, 178],
+    plateStops: ['#262a34', '#191c23', '#101217'],
+    steelStops: ['#dfe7f2', '#93a0b2', '#5a6475'],
+  },
+  // Warm wrought iron and worn steel.
+  forge: {
+    metal: [104, 94, 82],
+    plateSide: [82, 74, 64],
+    pieceSide: [200, 188, 168],
+    plateStops: ['#4d4842', '#35312c', '#221f1b'],
+    steelStops: ['#ece3d2', '#b6a991', '#7c6e5a'],
+  },
+};
+
+/** A small tile of grain noise for the forge plate, generated once in the browser. */
+let grainUrl: string | null = null;
+function grain(): string {
+  if (grainUrl !== null) return grainUrl;
+  grainUrl = '';
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    const ctx = c.getContext('2d')!;
+    const img = ctx.createImageData(96, 96);
+    for (let i = 0; i < img.data.length; i += 4) {
+      const v = Math.random() < 0.5 ? 0 : 255;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+      img.data[i + 3] = Math.floor(Math.random() * 38);
+    }
+    ctx.putImageData(img, 0, 0);
+    grainUrl = c.toDataURL();
+  } catch {
+    // no canvas (tests); the plate just renders without grain
+  }
+  return grainUrl;
+}
+
 function shade(base: [number, number, number], light: number): string {
   const f = 0.45 + 0.55 * Math.max(0, Math.min(1, light));
   return `rgb(${base.map((v) => Math.round(v * f)).join(',')})`;
@@ -107,6 +160,7 @@ export interface BoardView {
   pipeHalfWidth: number;
   lean: number; // radians
   yaw: number; // radians
+  theme: Theme;
   sources: Set<number>;
   targets: Map<number, ActionKind>;
   from: number | null;
@@ -138,6 +192,7 @@ export interface RenderedBoard {
 
 export function renderBoard(view: BoardView): RenderedBoard {
   const cam: Camera = { lean: view.lean, yaw: view.yaw };
+  const pal = PALETTES[view.theme];
   const P = (v: V3, leans = true) => project(v, cam, leans);
   const out: string[] = [];
 
@@ -163,7 +218,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
     quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], faceLight(-1, 0, view.yaw)); // -x
     quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], faceLight(1, 0, view.yaw)); // +x
     faces.sort((a, b) => a.depth - b.depth);
-    return faces.map((f) => `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade([150, 156, 166], f.light)}" />`).join('');
+    return faces.map((f) => `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade(pal.metal, f.light)}" />`).join('');
   };
   for (const sx of [-1, 1]) out.push(box(sx * pipeX - 9, sx * pipeX + 9, -16, 16, ground, pipeBot, 'stand'));
   out.push(box(-pipeX - 14, pipeX + 14, -pipeA, pipeA, pipeBot, pipeTop, 'pipe'));
@@ -176,13 +231,36 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const [ex, ey] = [b[0] - a[0], b[1] - a[1]];
     return { pts: pts.map((q) => q.p), depth: pts.reduce((s, q) => s + q.depth, 0) / 4, light: faceLight(ey, -ex, view.yaw) };
   }).sort((a, b) => a.depth - b.depth);
-  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade([92, 98, 108], s.light)}" />`);
-  out.push(`<polygon class="plate-top" points="${fmt(PLATE.map(([x, y]) => P([x, y, 0]).p))}" />`);
+  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade(pal.plateSide, s.light)}" />`);
+  const plateTop = fmt(PLATE.map(([x, y]) => P([x, y, 0]).p));
+  out.push(`<polygon class="plate-top" points="${plateTop}" />`);
+  if (view.theme === 'forge' && grain()) out.push(`<polygon class="grain" points="${plateTop}" fill="url(#grain)" />`);
 
-  // Pivot line drawn on the plate surface.
-  out.push(`<line class="pivot-line" x1="${P([-PLATE_HALF_W + 14, 0, 0]).p[0]}" y1="${P([-PLATE_HALF_W + 14, 0, 0]).p[1]}" x2="${P([PLATE_HALF_W - 14, 0, 0]).p[0]}" y2="${P([PLATE_HALF_W - 14, 0, 0]).p[1]}" />`);
+  // Each player's half gets a coloured rim along the plate edge; the two rims meet at
+  // the pointed ends, right over the pipe.
+  const inset = (k: number) => PLATE.map(([x, y]) => [x * k, y * k] as V2);
+  const rimPts = inset(0.985);
+  const rimPath = (idx: number[]) => fmt(idx.map((i) => P([rimPts[i][0], rimPts[i][1], 0]).p));
+  out.push(`<polyline class="rim rim-red" points="${rimPath([5, 0, 1, 2])}" />`);
+  out.push(`<polyline class="rim rim-blue" points="${rimPath([2, 3, 4, 5])}" />`);
 
-  // Slots.
+  // Rivets around the forge plate.
+  if (view.theme === 'forge') {
+    const rv = inset(0.955);
+    for (let i = 0; i < rv.length; i++) {
+      const [ax, ay] = rv[i];
+      const [bx, by] = rv[(i + 1) % rv.length];
+      const n = Math.max(2, Math.round(Math.hypot(bx - ax, by - ay) / 42));
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n;
+        const [x, y] = P([ax + (bx - ax) * t, ay + (by - ay) * t, 0]).p;
+        out.push(`<ellipse class="rivet" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="3.4" ry="${(3.4 * Math.sin(CAMERA_ELEVATION)).toFixed(1)}" />`);
+      }
+    }
+  }
+
+  // Slots, grouped so a theme can light them all with one filter.
+  out.push('<g class="slots">');
   const spawnOwner = new Map<number, Player>([...SPAWNS.red.map((id) => [id, 'red'] as const), ...SPAWNS.blue.map((id) => [id, 'blue'] as const)]);
   for (const { id } of CELLS) {
     const [cx, cy] = boardXY(id);
@@ -194,6 +272,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const hex = (r: number) => fmt(hex2(cx, cy, r).map(([x, y]) => P([x, y, 0]).p));
     out.push(`<g class="${classes}" data-id="${id}"><polygon class="slot-hex" points="${hex(R - 3)}" />${spawn ? `<polygon class="spawn-ring" points="${hex(R - 8)}" />` : ''}</g>`);
   }
+  out.push('</g>');
 
   /**
    * Affine transform that lays text flat on the plate at (x, y, z), upright for the camera,
@@ -232,7 +311,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
           return `<line class="seam" x1="${p1[0].toFixed(1)}" y1="${p1[1].toFixed(1)}" x2="${p2[0].toFixed(1)}" y2="${p2[1].toFixed(1)}" />`;
         }).join('');
         return {
-          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade([205, 210, 217], faceLight(mid[0], mid[1], view.yaw))}" />${seams}`,
+          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade(pal.pieceSide, faceLight(mid[0], mid[1], view.yaw))}" />${seams}`,
           depth: pts.reduce((s, q) => s + q.depth, 0) / 4,
         };
       })
@@ -265,6 +344,8 @@ export function renderBoard(view: BoardView): RenderedBoard {
       out.push(`<g class="mark mark-spawn" data-id="${id}" transform="${at}"><circle r="11" /><path d="M-6 0H6M0 -6V6" /></g>`);
     } else if (kind === 'merge') {
       out.push(`<g class="mark mark-merge" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-6 -4L0 3L6 -4M-6 3H6" /></g>`);
+    } else if (kind === 'convert') {
+      out.push(`<g class="mark mark-convert" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-5 -2A5 5 0 0 1 5 -2M5 -2L5 -6M5 2A5 5 0 0 1 -5 2M-5 2L-5 6" /></g>`);
     } else if (kind === 'strike') {
       out.push(`<g class="mark mark-strike" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-5 -5L5 5M5 -5L-5 5" /></g>`);
     }
@@ -277,11 +358,12 @@ export function renderBoard(view: BoardView): RenderedBoard {
     board: `<svg class="board" viewBox="${viewBox}" role="img" aria-label="Hexagonal balance board">
     <defs>
       <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#454b54" /><stop offset="0.5" stop-color="#30343b" /><stop offset="1" stop-color="#22252b" />
+        <stop offset="0" stop-color="${pal.plateStops[0]}" /><stop offset="0.5" stop-color="${pal.plateStops[1]}" /><stop offset="1" stop-color="${pal.plateStops[2]}" />
       </linearGradient>
       <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#eef1f4" /><stop offset="0.45" stop-color="#b3bac3" /><stop offset="1" stop-color="#858c96" />
+        <stop offset="0" stop-color="${pal.steelStops[0]}" /><stop offset="0.45" stop-color="${pal.steelStops[1]}" /><stop offset="1" stop-color="${pal.steelStops[2]}" />
       </linearGradient>
+      ${view.theme === 'forge' && grain() ? `<pattern id="grain" width="96" height="96" patternUnits="userSpaceOnUse"><image href="${grain()}" width="96" height="96" /></pattern>` : ''}
     </defs>
     ${out.join('\n')}
   </svg>`,

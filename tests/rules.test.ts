@@ -8,6 +8,8 @@ import {
   roll,
   skipDie,
   playableActions,
+  canPass,
+  piecesOf,
   type DieFace,
   type GameState,
   type Stack,
@@ -23,7 +25,7 @@ function withDice(state: GameState, a: DieFace, b: DieFace): GameState {
 }
 
 function emptyGame(): GameState {
-  return newGame({ boardMass: 120, pipeHalfWidth: 0.35, startingPieces: 0, forcedMoves: false });
+  return newGame({ boardMass: 120, pipeHalfWidth: 0.35, startingPieces: 0, forcedMoves: false, doubleCombos: false, diceCount: 2, pieceLimit: 0 });
 }
 
 function place(state: GameState, id: number, stack: Stack): GameState {
@@ -149,3 +151,54 @@ describe('actions', () => {
     expect(playable.some((p) => p.action.kind === 'move' && p.die === 1)).toBe(true);
   });
 });
+
+describe('experiments', () => {
+  const combos = (extra = {}) => newGame({ ...newGame().settings, doubleCombos: true, ...extra });
+
+  it('snake eyes gives three forced spawns that cannot be passed', () => {
+    const state = withDice(combos(), 1, 1);
+    expect(state.combo?.name).toBe('Snake eyes');
+    expect(state.dice).toHaveLength(3);
+    expect(state.dice.every((d) => d.forced && d.action === 'spawn')).toBe(true);
+    expect(canPass(state, 0)).toBe(false);
+  });
+
+  it('double fours convert an adjacent enemy stack of up to three', () => {
+    let state = place(emptyGame(), cellAt(4, 6)!, { owner: 'red', count: 1 });
+    state = place(state, cellAt(4, 8)!, { owner: 'blue', count: 3 });
+    state = { ...state, settings: { ...state.settings, doubleCombos: true } };
+    state = withDice(state, 4, 4);
+    expect(state.dice).toHaveLength(1);
+    state = applyAction(state, 0, { kind: 'convert', from: cellAt(4, 6)!, to: cellAt(4, 8)! });
+    expect(state.stacks[cellAt(4, 8)!]).toEqual({ owner: 'red', count: 3 });
+  });
+
+  it('jackpot grants a bonus roll to the same player without chaining combos', () => {
+    let state = withDice(combos(), 6, 6);
+    state = skipDie(skipDie(state, 0), 1);
+    expect(state.turn).toBe('red');
+    expect(state.phase).toBe('roll');
+    state = withDice(state, 1, 1);
+    expect(state.combo).toBeNull();
+    expect(state.dice).toHaveLength(2);
+  });
+
+  it('three-dice mode rolls three dice and triples trigger their own combo', () => {
+    const three = withDice2(combos({ diceCount: 3 }), [5, 2, 3]);
+    expect(three.dice).toHaveLength(3);
+    const triple = withDice2(combos({ diceCount: 3 }), [6, 6, 6]);
+    expect(triple.combo?.name).toBe('Mother lode');
+    expect(triple.bonusRoll).toBe(true);
+  });
+
+  it('piece limit blocks spawning and reinforcing at the cap', () => {
+    const state = withDice(newGame({ ...newGame().settings, pieceLimit: 3 }), 1, 5);
+    expect(piecesOf(state, 'red')).toBe(3);
+    expect(playableActions(state).filter((p) => p.action.kind === 'spawn' || p.action.kind === 'reinforce')).toHaveLength(0);
+  });
+});
+
+function withDice2(state: GameState, faces: number[]): GameState {
+  return roll(state, facesRandom(...faces));
+}
+
