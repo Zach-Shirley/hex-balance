@@ -50,6 +50,8 @@ export interface Settings {
   pipeHalfWidth: number;
   /** Pieces each player starts with on each spawn slot. */
   startingPieces: number;
+  /** When on, a die must be used if it has any legal action; passing is only for dead dice. */
+  forcedMoves: boolean;
 }
 
 // Rough physical estimate: ~3 cm cells, 1 cm plate, 0.5 cm pieces and a
@@ -61,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   boardMass: 40,
   pipeHalfWidth: 0.25,
   startingPieces: 1,
+  forcedMoves: false,
 };
 
 export interface Die {
@@ -266,10 +269,21 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
   return settle({ ...state, stacks, dice, log });
 }
 
+/** Whether a die has any legal action for the player to move. */
+export function dieIsPlayable(state: GameState, dieIndex: number): boolean {
+  const die = state.dice[dieIndex];
+  return !!die && allowedKinds(die.face).some((kind) => legalActions(state, kind).length > 0);
+}
+
+export function canPass(state: GameState, dieIndex: number): boolean {
+  return !state.settings.forcedMoves || !dieIsPlayable(state, dieIndex);
+}
+
 export function skipDie(state: GameState, dieIndex: number): GameState {
   if (state.phase !== 'act') throw new Error('No dice to skip.');
   const die = state.dice[dieIndex];
   if (!die || die.used) throw new Error('That die is not available.');
+  if (!canPass(state, dieIndex)) throw new Error('Forced moves are on: this die has a legal action.');
   const dice = state.dice.map((d, i) => (i === dieIndex ? { ...d, used: true } : d));
   return settle({ ...state, dice, log: [...state.log, `${playerName(state.turn)} passed on a ${die.face}.`] });
 }

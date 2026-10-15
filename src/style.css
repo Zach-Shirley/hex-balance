@@ -102,85 +102,15 @@ button {
 /* ---------- Balance meter ---------- */
 
 .balance {
-  margin: 16px 0 6px;
-}
-
-.balance-ends {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: 0.85rem;
-  font-weight: 600;
-  margin-bottom: 6px;
+  margin: 14px 0 4px;
+  text-align: center;
 }
 
 .balance-status {
-  color: var(--muted);
-  font-weight: 500;
+  font-size: 0.92rem;
+  color: var(--text);
 }
 
-.balance-track {
-  position: relative;
-  height: 16px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--red) 0%, rgba(255, 69, 89, 0.25) 30%, rgba(255, 255, 255, 0.06) 50%, rgba(74, 168, 255, 0.25) 70%, var(--blue) 100%);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
-}
-
-.balance-danger {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 10%;
-  background: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.25) 0 4px, transparent 4px 8px);
-}
-.balance-danger.left {
-  left: 0;
-  border-radius: 999px 0 0 999px;
-}
-.balance-danger.right {
-  right: 0;
-  border-radius: 0 999px 999px 0;
-}
-
-.balance-center {
-  position: absolute;
-  left: 50%;
-  top: -3px;
-  bottom: -3px;
-  width: 2px;
-  background: rgba(255, 255, 255, 0.35);
-}
-
-.balance-marker,
-.balance-ghost {
-  position: absolute;
-  top: 50%;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.balance-marker {
-  background: #f4f1f3;
-  border: 3px solid #1a1519;
-  box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
-  transition: left 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.balance-ghost {
-  border: 2px dashed rgba(255, 255, 255, 0.75);
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.balance-ghost.show {
-  opacity: 1;
-}
-.balance-ghost.fatal {
-  border-color: #ffd34d;
-  box-shadow: 0 0 10px #ffd34d;
-}
 
 .balance-meta {
   margin-top: 6px;
@@ -220,30 +150,134 @@ button {
 }
 
 .tilt {
-  width: min(100%, 720px, calc((100vh - 190px) * 1.45));
-  min-width: 300px;
+  flex: 0 1 auto;
+  width: min(720px, calc((100vh - 170px) * 1.45));
+  min-width: 0;
 }
 
-.tilt.shaky .board {
-  animation: shake 0.28s infinite;
+.board-host {
+  position: relative;
 }
 
-@keyframes shake {
-  0%,
-  100% {
-    transform: translate(0, 0) rotate(0);
+.board-under {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Near tipping, the plate rocks gently about the pipe toward the sinking side. */
+.board.swaying {
+  animation: sway 0.95s ease-in-out infinite alternate;
+}
+
+@keyframes sway {
+  from {
+    transform: perspective(900px) rotateX(0deg);
   }
-  25% {
-    transform: translate(-1.5px, 1px) rotate(-0.25deg);
+  to {
+    transform: perspective(900px) rotateX(var(--sway));
   }
-  75% {
-    transform: translate(1.5px, -1px) rotate(0.25deg);
-  }
+}
+
+.stage-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  width: 100%;
+}
+
+/* ---------- Vertical balance meter ---------- */
+
+.meter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  padding: 18px 0;
+  flex: 0 0 auto;
+}
+
+.meter-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.15;
+}
+
+.meter-track {
+  position: relative;
+  flex: 1;
+  width: 14px;
+  min-height: 180px;
+  border-radius: 999px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+.meter-danger {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 10%;
+  background: repeating-linear-gradient(45deg, rgba(0, 0, 0, 0.28) 0 4px, transparent 4px 8px);
+}
+.meter-danger.top {
+  top: 0;
+  border-radius: 999px 999px 0 0;
+}
+.meter-danger.bottom {
+  bottom: 0;
+  border-radius: 0 0 999px 999px;
+}
+
+.meter-center {
+  position: absolute;
+  top: 50%;
+  left: -4px;
+  right: -4px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.meter-marker,
+.meter-ghost {
+  position: absolute;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.meter-marker {
+  background: #f4f1f3;
+  border: 3px solid #1a1519;
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.5);
+  transition: top 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.meter-ghost {
+  border: 2px dashed rgba(255, 255, 255, 0.75);
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.meter-ghost.show {
+  opacity: 1;
+}
+.meter-ghost.fatal {
+  border-color: #ffd34d;
+  box-shadow: 0 0 10px #ffd34d;
 }
 
 /* ---------- Board ---------- */
 
 .board {
+  position: relative;
+  z-index: 1;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   display: block;
@@ -314,6 +348,18 @@ button {
 }
 .slot.is-target:hover .slot-hex {
   fill: #3a2f2a;
+}
+
+/* Destination outline drawn on top of every stack so it stays visible and clickable. */
+.target-hit {
+  fill: rgba(255, 211, 77, 0.04);
+  stroke: #ffd34d;
+  stroke-width: 1.6;
+  stroke-dasharray: 5 4;
+  cursor: pointer;
+}
+.target-hit:hover {
+  fill: rgba(255, 211, 77, 0.16);
 }
 
 .target-dot {
@@ -602,6 +648,22 @@ details summary {
 .settings label span {
   color: var(--muted);
 }
+.settings label.check {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.4;
+}
+.settings label.check input {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.settings label.check span {
+  color: var(--text);
+}
+
 .settings input {
   padding: 7px 10px;
   border-radius: 10px;
@@ -758,12 +820,8 @@ details summary {
   .balance {
     margin-top: 12px;
   }
-  .balance-ends {
-    font-size: 0.72rem;
-  }
   .balance-status {
-    text-align: center;
-    padding: 0 6px;
+    font-size: 0.8rem;
   }
   .balance-meta {
     font-size: 0.7rem;
@@ -773,11 +831,32 @@ details summary {
     gap: 12px;
   }
 
-  /* Let the board use the full screen width for bigger tap targets. */
+  /* Let the board use nearly the full screen width for bigger tap targets. */
+  .stage-row {
+    width: calc(100% + 14px);
+    margin: 0 -2px 0 -12px;
+    gap: 4px;
+  }
   .tilt {
-    width: calc(100% + 32px);
+    flex: 1;
+    width: auto;
     min-width: 0;
-    margin: 0 -16px;
+  }
+  .meter {
+    padding: 8px 0;
+    gap: 6px;
+  }
+  .meter-label {
+    font-size: 0.62rem;
+  }
+  .meter-track {
+    width: 10px;
+    min-height: 140px;
+  }
+  .meter-marker,
+  .meter-ghost {
+    width: 16px;
+    height: 16px;
   }
 
   /* Keep the dice and instructions on screen while you look at the board. */

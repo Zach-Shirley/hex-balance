@@ -22,7 +22,7 @@ function withDice(state: GameState, a: DieFace, b: DieFace): GameState {
 }
 
 function emptyGame(): GameState {
-  return newGame({ boardMass: 120, pipeHalfWidth: 0.35, startingPieces: 0 });
+  return newGame({ boardMass: 120, pipeHalfWidth: 0.35, startingPieces: 0, forcedMoves: false });
 }
 
 function place(state: GameState, id: number, stack: Stack): GameState {
@@ -130,5 +130,12 @@ describe('actions', () => {
     state = skipDie(state, 1);
     expect(state.turn).toBe('blue');
     expect(state.phase).toBe('roll');
+  });
+
+  it('forced moves block passing on a playable die but allow passing a dead one', () => {
+    let state = withDice(newGame({ ...newGame().settings, forcedMoves: true }), 5, 4);
+    expect(() => skipDie(state, 0)).toThrow();
+    state = skipDie(state, 1); // strike has no target at the start
+    expect(state.dice[1].used).toBe(true);
   });
 });

@@ -37,7 +37,7 @@ npm run build   # typecheck + production bundle
 | Move = one step, or jump over one adjacent stack | Assumed (combines the remembered "move" and "jump") |
 | Spawn may add to your own stack on a spawn slot | Assumed, so starting pieces don't make early 1s useless |
 | One starting piece per spawn slot | Assumed |
-| Dice may be passed; used in any order | Assumed |
+| Dice may be passed; used in any order | Assumed. Optional **Forced moves** setting (off by default): a die must be used if it has any legal move |
 | Tipping model and default weights | Assumed; see below |
 
 ## Weight model

@@ -13,6 +13,7 @@ import {
   resolveStacks,
   roll,
   skipDie,
+  canPass,
   other,
   type Action,
   type ActionKind,
@@ -44,8 +45,11 @@ let ui: Ui = { die: null, kind: null, from: null };
 let online: Online = { mode: 'local', code: null, status: null, detail: null };
 let host: HostSession | null = null;
 let guest: GuestSession | null = null;
-/** Local hot-seat views from Blue's edge; online players view from their own edge. */
-let viewFlip = false;
+/** Camera yaw in radians: 0 views from Blue's edge, π from Red's. Online players view from their own edge. */
+let viewYaw = 0;
+let targetYaw = 0;
+let yawAnim: number | null = null;
+const flipped = () => Math.cos(targetYaw) < 0;
 
 const myColor = (): Player | null => (online.mode === 'host' ? 'red' : online.mode === 'guest' ? 'blue' : null);
 const canAct = () => state.phase !== 'over' && (myColor() === null || state.turn === myColor());
@@ -168,7 +172,7 @@ function startHost(code = newRoomCode(), resume = false) {
     state = newGame(state.settings);
   }
   online = { mode: 'host', code, status: 'starting', detail: null };
-  viewFlip = true;
+  setYaw(Math.PI);
   history.replaceState(null, '', `?host=${code}`);
   saveHostState();
   host = new HostSession(code, { onStatus: setStatus, onIntent: onGuestIntent, getState: () => state });
@@ -178,7 +182,7 @@ function startHost(code = newRoomCode(), resume = false) {
 function startGuest(code: string) {
   leaveOnline(false);
   online = { mode: 'guest', code, status: 'starting', detail: null };
-  viewFlip = false;
+  setYaw(0);
   history.replaceState(null, '', `?join=${code}`);
   guest = new GuestSession(code, {
     onStatus: setStatus,
@@ -198,7 +202,7 @@ function leaveOnline(rerender = true) {
   guest = null;
   if (online.mode !== 'local') {
     online = { mode: 'local', code: null, status: null, detail: null };
-    viewFlip = false;
+    setYaw(0);
     history.replaceState(null, '', location.pathname);
     if (rerender) {
       state = newGame(state.settings);
@@ -258,15 +262,59 @@ function targetLean(): number {
 function drawBoard() {
   const host = app.querySelector<HTMLElement>('.board-host');
   if (!host) return;
-  host.innerHTML = renderBoard({
+  const view = renderBoard({
     stacks: state.stacks,
     pipeHalfWidth: state.settings.pipeHalfWidth,
     lean: shownLean,
-    flip: viewFlip,
+    yaw: viewYaw,
     sources: canAct() ? sources() : new Set(),
     targets: canAct() ? new Map(targets().map((a) => [a.to, a.kind])) : new Map(),
     from: ui.from,
   });
+  host.innerHTML = view.under + view.board;
+
+  // Near tipping, rock only the plate and its stacks about the pipe, toward the sinking side.
+  const ratio = balance(state).ratio;
+  const board = host.querySelector<SVGElement>('.board');
+  if (board && state.phase !== 'over' && Math.abs(ratio) >= 0.8 && yawAnim === null) {
+    const sinking: Player = ratio > 0 ? 'blue' : 'red';
+    const near: Player = Math.cos(viewYaw) < 0 ? 'red' : 'blue';
+    const severity = Math.min(1, (Math.abs(ratio) - 0.8) / 0.2);
+    // Positive rotateX lifts the near edge, so sinking the near edge needs a negative angle.
+    const deg = (0.5 + 1.1 * severity) * (sinking === near ? -1 : 1);
+    board.style.setProperty('--sway', `${deg.toFixed(2)}deg`);
+    board.style.transformOrigin = `50% ${view.pivotPct.toFixed(1)}%`;
+    board.classList.add('swaying');
+  }
+}
+
+function setYaw(yaw: number) {
+  if (yawAnim !== null) cancelAnimationFrame(yawAnim);
+  yawAnim = null;
+  viewYaw = targetYaw = yaw;
+}
+
+/** Spin the table half a turn so the other player's edge is nearest. */
+function rotateView() {
+  if (yawAnim !== null) cancelAnimationFrame(yawAnim);
+  const start = viewYaw;
+  targetYaw = Math.round(targetYaw / Math.PI + 1) * Math.PI;
+  const end = targetYaw;
+  const t0 = performance.now();
+  const frame = (now: number) => {
+    const t = Math.min(1, (now - t0) / 650);
+    const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    viewYaw = start + (end - start) * eased;
+    if (t < 1) {
+      yawAnim = requestAnimationFrame(frame);
+      drawBoard();
+    } else {
+      yawAnim = null;
+      viewYaw = targetYaw = end % (2 * Math.PI);
+      render();
+    }
+  };
+  yawAnim = requestAnimationFrame(frame);
 }
 
 function animateLean() {
@@ -328,7 +376,7 @@ function dicePanel(): string {
           <span class="die-label">${meaning === 'wild' ? 'Wild' : ACTION_LABELS[meaning]}</span>
           ${!die.used && !playable ? '<span class="die-note">no legal move</span>' : ''}
         </button>
-        ${die.used ? '<span class="die-used">used</span>' : mine ? `<button class="pass-btn" data-pass="${i}">Pass</button>` : ''}
+        ${die.used ? '<span class="die-used">used</span>' : mine && canPass(state, i) ? `<button class="pass-btn" data-pass="${i}">Pass</button>` : ''}
       </div>`;
     })
     .join('');
@@ -349,7 +397,11 @@ function hint(): string {
   if (state.phase === 'over') return `Game over: the board tipped toward ${playerName(state.loser!)}. Start a new game to play again.`;
   if (!canAct()) return `${playerName(state.turn)} is playing. You'll see their moves here.`;
   if (state.phase === 'roll') return `${myColor() ? 'Your' : `${playerName(state.turn)}'s`} turn. Roll two dice; each die is one action.`;
-  if (ui.die === null) return 'Pick a die to use it, or pass on it.';
+  if (ui.die === null) {
+    return state.settings.forcedMoves
+      ? 'Pick a die to use it. Forced moves are on: you can only pass on a die with no legal move.'
+      : 'Pick a die to use it, or pass on it.';
+  }
   if (!ui.kind) return 'Wild die: choose any action.';
   const legal = currentLegal();
   if (!legal.length) return `No legal ${ACTION_LABELS[ui.kind].toLowerCase()} right now. Pass on this die or pick the other one.`;
@@ -358,10 +410,14 @@ function hint(): string {
   return `${ACTION_HELP[ui.kind]} Choose a highlighted cell.`;
 }
 
-function balanceBar(): string {
+/** Meter position (percent from the top) for a balance ratio; the marker moves toward the winning player's end. */
+function meterPos(ratio: number): number {
+  const towardFar = (flipped() ? -1 : 1) * Math.max(-1, Math.min(1, ratio)); // ratio > 0 means Red is winning
+  return 50 - towardFar * 50;
+}
+
+function balanceStatus(): string {
   const b = balance(state);
-  // Torque toward Blue's side (positive) means Red is winning, so the marker moves toward Red (left).
-  const pos = 50 - Math.max(-1, Math.min(1, b.ratio)) * 50;
   const leader = Math.abs(b.ratio) < 0.02 ? null : b.ratio > 0 ? 'red' : 'blue';
   const sinking = leader ? other(leader) : null;
   const status = state.loser
@@ -370,14 +426,23 @@ function balanceBar(): string {
       ? `<strong class="c-${leader}">${playerName(leader)}</strong> is winning: ${playerName(sinking!)}'s side is ${Math.round(Math.abs(b.ratio) * 100)}% of the way to tipping`
       : 'Level';
   return `<div class="balance">
-    <div class="balance-ends"><span class="c-red">◀ Red wins</span><span class="balance-status">${status}</span><span class="c-blue">Blue wins ▶</span></div>
-    <div class="balance-track">
-      <div class="balance-danger left"></div><div class="balance-danger right"></div>
-      <div class="balance-center"></div>
-      <div class="balance-ghost" style="left:${pos}%"></div>
-      <div class="balance-marker" style="left:${pos}%"></div>
-    </div>
+    <div class="balance-status">${status}</div>
     <div class="balance-meta">Torque ${b.torque.toFixed(1)} of ${b.threshold.toFixed(1)} · ${b.totalPieces} pieces on the board</div>
+  </div>`;
+}
+
+/** Vertical meter beside the board, oriented like the board: each player's end sits on their side. */
+function meter(far: Player, near: Player): string {
+  const pos = meterPos(balance(state).ratio);
+  return `<div class="meter" aria-label="Balance meter">
+    <span class="meter-label c-${far}">${playerName(far)}<br />wins</span>
+    <div class="meter-track" style="background: linear-gradient(180deg, var(--${far}) 0%, rgba(255, 255, 255, 0.06) 50%, var(--${near}) 100%)">
+      <div class="meter-danger top"></div><div class="meter-danger bottom"></div>
+      <div class="meter-center"></div>
+      <div class="meter-ghost" style="top:${pos}%"></div>
+      <div class="meter-marker" style="top:${pos}%"></div>
+    </div>
+    <span class="meter-label c-${near}">${playerName(near)}<br />wins</span>
   </div>`;
 }
 
@@ -424,6 +489,7 @@ function settingsPanel(): string {
     <label>Plate mass <span>(piece-weights)</span><input type="number" name="boardMass" min="0" step="5" value="${s.boardMass}" /></label>
     <label>Pipe half-width <span>(cell heights)</span><input type="number" name="pipeHalfWidth" min="0.05" step="0.05" value="${s.pipeHalfWidth}" /></label>
     <label>Starting pieces per spawn slot<input type="number" name="startingPieces" min="0" max="5" step="1" value="${s.startingPieces}" /></label>
+    <label class="check"><input type="checkbox" name="forcedMoves" ${s.forcedMoves ? 'checked' : ''} /><span><strong>Forced moves</strong>: you must use a die if it has any legal move, even a bad one</span></label>
     <p class="muted">With these values, about ${edgePieces} unopposed pieces on a far edge tip the board.</p>
     <button class="ghost-btn" data-act="apply-settings">Apply and restart</button>
   </details>`;
@@ -453,9 +519,7 @@ function resultCard(): string {
 }
 
 function render() {
-  const b = balance(state);
-  const shaky = state.phase !== 'over' && Math.abs(b.ratio) >= 0.8;
-  const far: Player = viewFlip ? 'blue' : 'red';
+  const far: Player = flipped() ? 'blue' : 'red';
   const near = other(far);
   const turnText = state.phase === 'over' ? 'Game over' : `Turn ${state.turnNumber} · <strong>${myColor() && state.turn === myColor() ? 'You' : playerName(state.turn)}</strong>`;
 
@@ -466,11 +530,14 @@ function render() {
       <button class="ghost-btn" data-act="rotate" title="Turn the board around">Rotate<span class="long"> view</span></button>
       ${online.mode === 'guest' ? '' : '<button class="ghost-btn" data-act="new">New<span class="long"> game</span></button>'}
     </header>
-    ${balanceBar()}
+    ${balanceStatus()}
     <main class="layout">
       <section class="stage">
         <div class="side-label c-${far}">${playerName(far)} side</div>
-        <div class="tilt ${shaky ? 'shaky' : ''}"><div class="board-host"></div></div>
+        <div class="stage-row">
+          <div class="tilt"><div class="board-host"></div></div>
+          ${meter(far, near)}
+        </div>
         <div class="side-label c-${near}">${playerName(near)} side</div>
         ${resultCard()}
       </section>
@@ -504,8 +571,7 @@ app.addEventListener('click', (event) => {
     return dispatch({ type: 'new' });
   }
   if (act === 'rotate') {
-    viewFlip = !viewFlip;
-    return render();
+    return rotateView();
   }
   if (act === 'host') return startHost();
   if (act === 'leave') return leaveOnline();
@@ -524,6 +590,7 @@ app.addEventListener('click', (event) => {
       boardMass: Math.max(0, read('boardMass') || 0),
       pipeHalfWidth: Math.max(0.05, read('pipeHalfWidth') || DEFAULT_SETTINGS.pipeHalfWidth),
       startingPieces: Math.max(0, Math.min(5, Math.round(read('startingPieces') || 0))),
+      forcedMoves: app.querySelector<HTMLInputElement>('input[name="forcedMoves"]')!.checked,
     };
     saveSettings(settings);
     return setState(newGame(settings));
@@ -540,7 +607,7 @@ app.addEventListener('click', (event) => {
 
 // Hovering a destination previews where the balance marker would land.
 app.addEventListener('mouseover', (event) => {
-  const ghost = app.querySelector<HTMLElement>('.balance-ghost');
+  const ghost = app.querySelector<HTMLElement>('.meter-ghost');
   if (!ghost) return;
   const cell = (event.target as Element).closest<SVGElement>('[data-id]')?.dataset.id;
   const action = cell === undefined || !canAct() ? null : (targets().find((a) => a.to === Number(cell)) ?? null);
@@ -549,7 +616,7 @@ app.addEventListener('mouseover', (event) => {
     ghost.classList.remove('show', 'fatal');
     return;
   }
-  ghost.style.left = `${50 - Math.max(-1, Math.min(1, ratio)) * 50}%`;
+  ghost.style.top = `${meterPos(ratio)}%`;
   ghost.classList.add('show');
   ghost.classList.toggle('fatal', Math.abs(ratio) >= 1);
 });
