@@ -222,6 +222,10 @@ export interface BoardView {
   lean: number; // radians
   yaw: number; // radians
   theme: Theme;
+  /** Cells punched through the plate. */
+  holes: Set<number>;
+  /** Spawn slot heat: level 1-2, or overheated with turns left. */
+  heat: Map<number, { heat: number; cooldown: number }>;
   sources: Set<number>;
   targets: Map<number, ActionKind>;
   from: number | null;
@@ -278,17 +282,23 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, cls: string, rustiness = 1) => {
     const faces: { pts: V2[]; depth: number; light: number }[] = [];
     const v = (x: number, y: number, z: number) => P([x, y, z], false);
-    const quad = (a: V3, b: V3, c: V3, d: V3, light: number) => {
+    // Only faces turned toward the camera are drawn, so a box never shows its inside
+    // (that is what made the pipe and its clamps look like impossible shapes).
+    const quad = (a: V3, b: V3, c: V3, d: V3, light: number, n: V3) => {
+      const cx = (a[0] + c[0]) / 2;
+      const cy = (a[1] + c[1]) / 2;
+      const cz = (a[2] + c[2]) / 2;
+      if (v(cx + n[0], cy + n[1], cz + n[2]).depth - v(cx, cy, cz).depth <= 1e-3) return;
       const pp = [a, b, c, d].map((q) => v(...q));
       faces.push({ pts: pp.map((q) => q.p), depth: pp.reduce((s, q) => s + q.depth, 0) / 4, light });
     };
     const top = faces.length;
-    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 1); // top
-    quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], faceLight(0, 1, view.yaw)); // +y
-    quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], faceLight(0, -1, view.yaw)); // -y
-    quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], faceLight(-1, 0, view.yaw)); // -x
-    quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], faceLight(1, 0, view.yaw)); // +x
-    const topFace = faces[top];
+    quad([x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1], 1, [0, 0, 1]); // top
+    quad([x0, y1, z0], [x1, y1, z0], [x1, y1, z1], [x0, y1, z1], faceLight(0, 1, view.yaw), [0, 1, 0]); // +y
+    quad([x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1], faceLight(0, -1, view.yaw), [0, -1, 0]); // -y
+    quad([x0, y0, z0], [x0, y1, z0], [x0, y1, z1], [x0, y0, z1], faceLight(-1, 0, view.yaw), [-1, 0, 0]); // -x
+    quad([x1, y0, z0], [x1, y1, z0], [x1, y1, z1], [x1, y0, z1], faceLight(1, 0, view.yaw), [1, 0, 0]); // +x
+    const topFace = faces.length > top ? faces[top] : undefined;
     faces.sort((a, b) => a.depth - b.depth);
     return faces
       .map((f) => {
@@ -307,14 +317,14 @@ export function renderBoard(view: BoardView): RenderedBoard {
   };
   for (const sx of [-1, 1]) {
     const cx = sx * pipeX;
-    out.push(box(cx - 22, cx + 22, -26, 26, ground, ground + 6, 'stand'));
+    out.push(box(cx - 22, cx + 22, -pipeA - 8, pipeA + 8, ground, ground + 6, 'stand'));
     out.push(box(cx - 7, cx + 7, -12, 12, ground + 6, pipeBot - 6, 'stand'));
-    out.push(bolt(cx - 15, front * 26, ground + 3) + bolt(cx + 15, front * 26, ground + 3));
+    out.push(bolt(cx - 15, front * (pipeA + 8), ground + 3) + bolt(cx + 15, front * (pipeA + 8), ground + 3));
   }
   out.push(box(-pipeX - 14, pipeX + 14, -pipeA, pipeA, pipeBot, pipeTop, 'pipe', 1.4));
   if (forge) {
     // Flanged end caps on the square tube.
-    for (const sx of [-1, 1]) out.push(box(sx * (pipeX + 14) - 2, sx * (pipeX + 14) + 2, -pipeA - 5, pipeA + 5, pipeBot - 5, pipeTop + 4, 'pipe flange', 1.2));
+    for (const sx of [-1, 1]) out.push(box(sx * (pipeX + 14) - 2, sx * (pipeX + 14) + 2, -pipeA - 5, pipeA + 5, pipeBot - 5, pipeTop, 'pipe flange', 1.2));
     // A beaded weld seam along the near face of the square tube.
     const seam = Array.from({ length: 40 }, (_, i) => {
       const x = -pipeX - 10 + ((2 * pipeX + 20) * i) / 39;
@@ -324,7 +334,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
   }
   for (const sx of [-1, 1]) {
     const cx = sx * pipeX;
-    out.push(box(cx - 11, cx + 11, -pipeA - 4, pipeA + 4, pipeBot - 6, pipeTop - 1, 'stand saddle'));
+    out.push(box(cx - 11, cx + 11, -pipeA - 4, pipeA + 4, pipeBot - 6, pipeTop, 'stand saddle'));
     out.push(bolt(cx - 6, front * (pipeA + 4), pipeBot - 2) + bolt(cx + 6, front * (pipeA + 4), pipeBot - 2));
   }
   const under = out.splice(0, out.length);
@@ -368,6 +378,8 @@ export function renderBoard(view: BoardView): RenderedBoard {
     }
   }
 
+  /** Overheat countdowns, drawn above the stacks so a piece on the slot never hides them. */
+  const heatBadges: [number, number, number][] = [];
   // Slots, grouped so a theme can light them all with one filter.
   out.push('<g class="slots">');
   const spawnOwner = new Map<number, Player>([...SPAWNS.red.map((id) => [id, 'red'] as const), ...SPAWNS.blue.map((id) => [id, 'blue'] as const)]);
@@ -379,6 +391,23 @@ export function renderBoard(view: BoardView): RenderedBoard {
       .filter(Boolean)
       .join(' ');
     const hex = (r: number) => fmt(hex2(cx, cy, r).map(([x, y]) => P([x, y, 0]).p));
+    if (view.holes.has(id)) {
+      // A hole straight through the plate. The opening shows the far inner wall; where the
+      // bottom opening lines up with it you see straight through (clipped to the opening).
+      const bottom = fmt(hex2(cx, cy, R - 4).map(([x, y]) => P([x, y, -PLATE_T]).p));
+      out.push(
+        `<g class="hole" data-id="${id}"><clipPath id="hole-${id}"><polygon points="${hex(R - 4)}" /></clipPath>` +
+          `<polygon class="hole-wall" points="${hex(R - 4)}" /><polygon class="hole-through" points="${bottom}" clip-path="url(#hole-${id})" /></g>`,
+      );
+      continue;
+    }
+    const h = view.heat.get(id);
+    const heatCls = h ? (h.cooldown > 0 ? 'overheated' : h.heat > 0 ? `heat-${Math.min(2, h.heat)}` : '') : '';
+    if (heatCls) {
+      const [tx, ty] = P([cx, cy, 0]).p;
+      out.push(`<polygon class="heat-glow ${heatCls}" points="${hex(R - 3)}" />`);
+      if (h!.cooldown > 1) heatBadges.push([tx, ty, h!.cooldown - 1]);
+    }
     out.push(`<g class="${classes}" data-id="${id}"><polygon class="slot-hex" points="${hex(R - 3)}" />${spawn ? `<polygon class="spawn-ring" points="${hex(R - 8)}" />` : ''}</g>`);
   }
   out.push('</g>');
@@ -451,6 +480,8 @@ export function renderBoard(view: BoardView): RenderedBoard {
       out.push(`<ellipse class="mark mark-move" data-id="${id}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="7" ry="${(7 * ry).toFixed(1)}" />`);
     } else if (kind === 'spawn') {
       out.push(`<g class="mark mark-spawn" data-id="${id}" transform="${at}"><circle r="11" /><path d="M-6 0H6M0 -6V6" /></g>`);
+    } else if (kind === 'split') {
+      out.push(`<g class="mark mark-split" data-id="${id}" transform="${at}"><circle r="11" /><path d="M-5 5L5 -5" /><circle class="dot" cx="-3.5" cy="-3.5" r="1.6" /><circle class="dot" cx="3.5" cy="3.5" r="1.6" /></g>`);
     } else if (kind === 'merge') {
       out.push(`<g class="mark mark-merge" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-6 -4L0 3L6 -4M-6 3H6" /></g>`);
     } else if (kind === 'convert') {
@@ -458,6 +489,10 @@ export function renderBoard(view: BoardView): RenderedBoard {
     } else if (kind === 'strike') {
       out.push(`<g class="mark mark-strike" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-5 -5L5 5M5 -5L-5 5" /></g>`);
     }
+  }
+
+  for (const [x, y, n] of heatBadges) {
+    out.push(`<g class="heat-badge" transform="translate(${x.toFixed(1)} ${(y - 30).toFixed(1)})"><circle r="11" /><text y="5">${n}</text></g>`);
   }
 
   const viewBox = `${VIEWBOX.x.toFixed(0)} ${VIEWBOX.y.toFixed(0)} ${VIEWBOX.w.toFixed(0)} ${VIEWBOX.h.toFixed(0)}`;

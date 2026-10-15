@@ -7,15 +7,16 @@ export interface Stack {
   count: number;
 }
 
-export type ActionKind = 'spawn' | 'move' | 'merge' | 'strike' | 'reinforce' | 'convert';
+export type ActionKind = 'spawn' | 'move' | 'merge' | 'split' | 'strike' | 'reinforce' | 'convert';
 export type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
-export type DieAction = ActionKind | 'wild';
+/** What a die face offers: one action, merge-or-split, or anything (wild). */
+export type DieAction = ActionKind | 'mergesplit' | 'wild';
 
 /** Recovered die meanings. 4 (strike) is a best guess; 6 is wild. Convert only comes from combos. */
 export const DIE_ACTIONS: Record<DieFace, DieAction> = {
   1: 'spawn',
   2: 'move',
-  3: 'merge',
+  3: 'mergesplit',
   4: 'strike',
   5: 'reinforce',
   6: 'wild',
@@ -25,6 +26,7 @@ export const ACTION_LABELS: Record<ActionKind, string> = {
   spawn: 'Spawn',
   move: 'Move / jump',
   merge: 'Merge',
+  split: 'Split',
   strike: 'Strike',
   reinforce: 'Reinforce',
   convert: 'Convert',
@@ -34,13 +36,18 @@ export const ACTION_HELP: Record<ActionKind, string> = {
   spawn: 'Place a new piece on one of your spawn slots, empty or already holding your stack. Enemy stacks block a slot.',
   move: 'Move one of your stacks one cell, or jump it over an adjacent stack to the empty cell beyond.',
   merge: 'Move one of your stacks onto an adjacent stack of yours. They combine.',
+  split: 'Move half of one of your stacks (rounded down) onto an adjacent empty cell.',
   strike: 'One of your stacks knocks one piece off an adjacent enemy stack.',
   reinforce: 'Add one piece to any stack you control.',
   convert: `Take over an adjacent enemy stack of up to ${3} pieces. It becomes yours where it stands.`,
 };
 
-/** Wild dice offer the five basic actions; convert is never wild. */
-const WILD_KINDS: ActionKind[] = ['spawn', 'move', 'merge', 'strike', 'reinforce'];
+export function dieLabel(a: DieAction): string {
+  return a === 'wild' ? 'Wild' : a === 'mergesplit' ? 'Merge / split' : ACTION_LABELS[a];
+}
+
+/** Wild dice offer the basic actions; convert is never wild. */
+const WILD_KINDS: ActionKind[] = ['spawn', 'move', 'merge', 'split', 'strike', 'reinforce'];
 /** Largest enemy stack a convert can take over. */
 export const CONVERT_MAX = 3;
 
@@ -48,41 +55,64 @@ export type Action =
   | { kind: 'spawn'; to: number }
   | { kind: 'move'; from: number; to: number; jump: boolean }
   | { kind: 'merge'; from: number; to: number }
+  | { kind: 'split'; from: number; to: number }
   | { kind: 'strike'; from: number; to: number }
   | { kind: 'reinforce'; to: number }
   | { kind: 'convert'; from: number; to: number };
 
+/** Half the width of the square pivot pipe, in cell heights. Locked by Zach on 2026-10-15. */
+export const PIPE_HALF_WIDTH = 0.5;
+
 export interface Settings {
   /** Mass of the steel plate, in piece-weights. */
   boardMass: number;
-  /** Half the width of the square pivot pipe, in cell heights. */
-  pipeHalfWidth: number;
   /** Pieces each player starts with on each spawn slot. */
   startingPieces: number;
   /** When on, a die must be used if it has any legal action; passing is only for dead dice. */
   forcedMoves: boolean;
-  /** Experiment: doubles (and triples) trigger combos. */
-  doubleCombos: boolean;
   /** Experiment: roll this many dice each turn (2 or 3). */
   diceCount: number;
   /** Experiment: most pieces a player may have on the board at once (0 = no limit). */
   pieceLimit: number;
+  /** Experiment: spawn slots heat up and lock for a while when overused. */
+  overheat: boolean;
+  /** Experiment: each cell hides a height limit (5-12); taller stacks punch through and leave a hole. */
+  towerBreak: boolean;
 }
 
-// Rough physical estimate: ~3 cm cells, 1 cm plate, 0.5 cm pieces and a
-// 1-inch pipe gives a plate of ~145 piece-weights and a half-width of ~0.42.
-// Bot playtests at that weight mostly stalemated, because both sides keep
-// cancelling each other's torque. These lighter defaults let games end
-// (median ~19 rounds between greedy bots) and stay adjustable in the UI.
+// With the pipe half-width locked at 0.5, a plate of 20 piece-weights keeps games
+// short: greedy bots finish 86% of games, median 14 rounds (40 stalled half the time).
 export const DEFAULT_SETTINGS: Settings = {
-  boardMass: 40,
-  pipeHalfWidth: 0.25,
+  boardMass: 20,
   startingPieces: 1,
   forcedMoves: false,
-  doubleCombos: false,
   diceCount: 2,
   pieceLimit: 0,
+  overheat: false,
+  towerBreak: false,
 };
+
+/** Fill in missing settings (older saves and rooms) and drop retired ones. */
+export function normalizeSettings(raw: Partial<Settings> | undefined): Settings {
+  const out = { ...DEFAULT_SETTINGS };
+  for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]) {
+    if (raw && raw[key] !== undefined) (out as Record<string, unknown>)[key] = raw[key];
+  }
+  return out;
+}
+
+/** Spawn heat: spawning adds heat; at 3 the slot overheats and locks. */
+export const OVERHEAT_AT = 3;
+/** Own turns a slot stays locked after overheating. */
+export const OVERHEAT_TURNS = 2;
+export const BREAK_MIN = 5;
+export const BREAK_MAX = 12;
+
+export interface SpawnHeat {
+  heat: number;
+  /** Own turns left before an overheated slot can be used again (0 = usable). */
+  cooldown: number;
+}
 
 export interface Die {
   face: DieFace;
@@ -118,12 +148,20 @@ export interface GameState {
   isBonusRoll?: boolean;
   /** Triple sixes: the player is choosing which double combo to take. */
   comboChoice?: boolean;
+  /** Cells that have been punched through (tower-break experiment). */
+  holes?: number[];
+  /** Hidden per-cell height limits (tower-break experiment). */
+  breakLimits?: number[];
+  /** Heat on spawn slots, keyed by cell id (overheat experiment). */
+  heat?: Record<number, SpawnHeat>;
+  /** A notable event from the last action, shown to players. */
+  event?: string | null;
 }
 
 export const other = (player: Player): Player => (player === 'red' ? 'blue' : 'red');
 export const playerName = (player: Player) => (player === 'red' ? 'Red' : 'Blue');
 
-export function newGame(settings: Settings = DEFAULT_SETTINGS): GameState {
+export function newGame(settings: Settings = DEFAULT_SETTINGS, random: () => number = Math.random): GameState {
   const stacks: (Stack | null)[] = CELLS.map(() => null);
   if (settings.startingPieces > 0) {
     for (const player of ['red', 'blue'] as const) {
@@ -143,6 +181,10 @@ export function newGame(settings: Settings = DEFAULT_SETTINGS): GameState {
     bonusRoll: false,
     isBonusRoll: false,
     comboChoice: false,
+    holes: [],
+    breakLimits: settings.towerBreak ? CELLS.map(() => BREAK_MIN + Math.floor(random() * (BREAK_MAX - BREAK_MIN + 1))) : undefined,
+    heat: {},
+    event: null,
   };
 }
 
@@ -170,7 +212,7 @@ export function balance(state: Pick<GameState, 'stacks' | 'settings'>): Balance 
     torque += stack.count * leverArm(id);
     totalPieces += stack.count;
   });
-  const threshold = state.settings.pipeHalfWidth * (state.settings.boardMass + totalPieces);
+  const threshold = PIPE_HALF_WIDTH * (state.settings.boardMass + totalPieces);
   return { torque, threshold, ratio: threshold > 0 ? torque / threshold : 0, totalPieces };
 }
 
@@ -192,7 +234,9 @@ export const dieAction = (die: Pick<Die, 'face' | 'action'>): DieAction => die.a
 
 export function allowedKinds(die: Pick<Die, 'face' | 'action'>): ActionKind[] {
   const meaning = dieAction(die);
-  return meaning === 'wild' ? WILD_KINDS : [meaning];
+  if (meaning === 'wild') return WILD_KINDS;
+  if (meaning === 'mergesplit') return ['merge', 'split'];
+  return [meaning];
 }
 
 const make = (face: DieFace, action: DieAction, extra: Partial<Die> = {}): Die => ({ face, used: false, action, ...extra });
@@ -208,8 +252,8 @@ export const DOUBLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) =
     dice: (f) => [make(f, 'move'), make(f, 'move'), make(f, 'move', { bonus: true }), make(f, 'move', { bonus: true })],
   },
   3: {
-    combo: { name: 'Weld', text: 'Two merges and a free move.', tone: 'good' },
-    dice: (f) => [make(f, 'merge'), make(f, 'merge'), make(f, 'move', { bonus: true })],
+    combo: { name: 'Weld', text: 'Two merge/splits and two moves.', tone: 'good' },
+    dice: (f) => [make(f, 'mergesplit'), make(f, 'mergesplit'), make(f, 'move', { bonus: true }), make(f, 'move', { bonus: true })],
   },
   4: {
     combo: { name: 'Convert', text: `Both strikes become one convert: take over an adjacent enemy stack of up to ${CONVERT_MAX}.`, tone: 'mixed' },
@@ -238,7 +282,7 @@ export const TRIPLE_COMBOS: Record<DieFace, { combo: Combo; dice: (f: DieFace) =
     bonusRoll: true,
   },
   3: {
-    combo: { name: 'Forge', text: 'Two merges, a free move and a wild, then roll again.', tone: 'good' },
+    combo: { name: 'Forge', text: 'Two merge/splits, two moves and a wild, then roll again.', tone: 'good' },
     dice: (f) => [...DOUBLE_COMBOS[3].dice(f), make(f, 'wild', { bonus: true })],
     bonusRoll: true,
   },
@@ -297,12 +341,17 @@ export function legalActions(state: GameState, kind: ActionKind): Action[] {
   const mine = stacks.flatMap((stack, id) => (stack?.owner === me ? [id] : []));
   const limit = state.settings.pieceLimit > 0 ? state.settings.pieceLimit : Infinity;
   const room = limit - piecesOf(state, me);
+  const holes = new Set(state.holes ?? []);
+  const open = (id: number | undefined): id is number => id !== undefined && !stacks[id] && !holes.has(id);
   const actions: Action[] = [];
 
   switch (kind) {
     case 'spawn':
       if (room < 1) break;
-      for (const id of SPAWNS[me]) if (!stacks[id] || stacks[id]!.owner === me) actions.push({ kind, to: id });
+      for (const id of SPAWNS[me]) {
+        if (holes.has(id) || isOverheated(state, id)) continue;
+        if (!stacks[id] || stacks[id]!.owner === me) actions.push({ kind, to: id });
+      }
       break;
     case 'reinforce':
       if (room < 1) break;
@@ -312,19 +361,25 @@ export function legalActions(state: GameState, kind: ActionKind): Action[] {
       for (const from of mine) {
         DIRECTIONS.forEach((_, dir) => {
           const near = step(from, dir);
-          if (near === undefined) return;
+          if (near === undefined || holes.has(near)) return;
           if (!stacks[near]) {
             actions.push({ kind, from, to: near, jump: false });
             return;
           }
           const far = step(from, dir, 2);
-          if (far !== undefined && !stacks[far]) actions.push({ kind, from, to: far, jump: true });
+          if (open(far)) actions.push({ kind, from, to: far, jump: true });
         });
       }
       break;
     case 'merge':
       for (const from of mine) {
         for (const to of neighbors(from)) if (stacks[to]?.owner === me) actions.push({ kind, from, to });
+      }
+      break;
+    case 'split':
+      for (const from of mine) {
+        if (stacks[from]!.count < 2) continue;
+        for (const to of neighbors(from)) if (open(to)) actions.push({ kind, from, to });
       }
       break;
     case 'strike':
@@ -346,6 +401,10 @@ export function legalActions(state: GameState, kind: ActionKind): Action[] {
   return actions;
 }
 
+export function isOverheated(state: Pick<GameState, 'settings' | 'heat'>, id: number): boolean {
+  return state.settings.overheat && (state.heat?.[id]?.cooldown ?? 0) > 0;
+}
+
 export function sameAction(a: Action, b: Action): boolean {
   return (
     a.kind === b.kind &&
@@ -360,7 +419,7 @@ export function roll(state: GameState, random: () => number = Math.random): Game
   if (state.phase !== 'roll') throw new Error('Not time to roll.');
   const count = state.settings.diceCount === 3 ? 3 : 2;
   const faces = Array.from({ length: count }, () => (Math.floor(random() * 6) + 1) as DieFace);
-  const built = buildDice(faces, state.settings.doubleCombos);
+  const built = buildDice(faces, true);
   // Combos apply on bonus rolls too, but a bonus roll never earns another one.
   const capped = !!state.isBonusRoll && built.bonusRoll;
   const combo = built.combo && capped ? { ...built.combo, text: `${built.combo.text.replace(/,? then roll again\.?/, '.')} (No extra roll: this is already a bonus roll.)` } : built.combo;
@@ -402,6 +461,13 @@ export function resolveStacks(stacks: (Stack | null)[], player: Player, action: 
       next[action.to] = { owner: player, count: next[action.to]!.count + next[action.from]!.count };
       next[action.from] = null;
       break;
+    case 'split': {
+      const from = next[action.from]!;
+      const half = Math.floor(from.count / 2);
+      next[action.to] = { owner: player, count: half };
+      next[action.from] = { ...from, count: from.count - half };
+      break;
+    }
     case 'strike': {
       const target = next[action.to]!;
       next[action.to] = target.count > 1 ? { ...target, count: target.count - 1 } : null;
@@ -425,6 +491,8 @@ function describe(action: Action, stacks: (Stack | null)[]): string {
       return `${action.jump ? 'jumped' : 'moved'} a stack of ${size(action.from)}`;
     case 'merge':
       return `merged into a stack of ${size(action.to) + size(action.from)}`;
+    case 'split':
+      return `split ${Math.floor(size(action.from) / 2)} off a stack of ${size(action.from)}`;
     case 'strike':
       return size(action.to) > 1 ? `struck an enemy stack down to ${size(action.to) - 1}` : 'knocked out an enemy piece';
     case 'convert':
@@ -439,10 +507,32 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
   if (!allowedKinds(die).includes(action.kind)) throw new Error('That die does not allow this action.');
   if (!legalActions(state, action.kind).some((legal) => sameAction(legal, action))) throw new Error('Illegal action.');
 
-  const stacks = resolveStacks(state.stacks, state.turn, action);
+  let stacks = resolveStacks(state.stacks, state.turn, action);
   const dice = state.dice.map((d, i) => (i === dieIndex ? { ...d, used: true } : d));
   const log = [...state.log, `${playerName(state.turn)} ${describe(action, state.stacks)} (die ${die.face}).`];
-  return settle({ ...state, stacks, dice, log });
+  const events: string[] = [];
+
+  // Overheat: spawning heats the slot; at the limit it locks for a few of the owner's turns.
+  let heat = state.heat ?? {};
+  if (state.settings.overheat && action.kind === 'spawn') {
+    const h = heat[action.to] ?? { heat: 0, cooldown: 0 };
+    const next = h.heat + 1 >= OVERHEAT_AT ? { heat: 0, cooldown: OVERHEAT_TURNS + 1 } : { heat: h.heat + 1, cooldown: 0 };
+    heat = { ...heat, [action.to]: next };
+    if (next.cooldown) events.push(`${playerName(state.turn)}'s spawn slot overheated! Locked for ${OVERHEAT_TURNS} turns.`);
+  }
+
+  // Tower break: a stack taller than its cell's hidden limit punches through the plate.
+  let holes = state.holes ?? [];
+  if (state.settings.towerBreak && state.breakLimits) {
+    stacks = stacks.map((stack, id) => {
+      if (!stack || stack.count <= state.breakLimits![id]) return stack;
+      holes = [...holes, id];
+      events.push(`A ${playerName(stack.owner)} stack of ${stack.count} broke through the plate!`);
+      return null;
+    });
+  }
+
+  return settle({ ...state, stacks, dice, heat, holes, event: events.join(' ') || null, log: [...log, ...events] });
 }
 
 /** Whether a die has any legal action for the player to move. */
@@ -493,6 +583,18 @@ export function skipDie(state: GameState, dieIndex: number): GameState {
   return settle({ ...state, dice, log: [...state.log, `${playerName(state.turn)} ${note}.`] });
 }
 
+/** At the start of a player's turn their spawn slots cool by one step. */
+function coolSpawns(state: GameState, player: Player): Record<number, SpawnHeat> {
+  if (!state.settings.overheat) return state.heat ?? {};
+  const heat = { ...(state.heat ?? {}) };
+  for (const id of SPAWNS[player]) {
+    const h = heat[id];
+    if (!h) continue;
+    heat[id] = h.cooldown > 0 ? { heat: 0, cooldown: h.cooldown - 1 } : { heat: Math.max(0, h.heat - 1), cooldown: 0 };
+  }
+  return heat;
+}
+
 function settle(state: GameState): GameState {
   const loser = tippedToward(state);
   if (loser) {
@@ -519,6 +621,7 @@ function settle(state: GameState): GameState {
     const turn = other(state.turn);
     return {
       ...state,
+      heat: coolSpawns(state, turn),
       turn,
       turnNumber: turn === 'red' ? state.turnNumber + 1 : state.turnNumber,
       phase: 'roll',

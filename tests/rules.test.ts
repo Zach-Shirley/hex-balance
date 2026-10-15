@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { CELLS, SPAWNS, cellAt, leverArm, neighbors } from '../src/board';
 import {
+  DEFAULT_SETTINGS,
   applyAction,
   balance,
-  legalActions,
-  newGame,
-  roll,
-  skipDie,
-  playableActions,
   canPass,
   chooseCombo,
+  isOverheated,
+  legalActions,
+  newGame,
+  normalizeSettings,
   piecesOf,
-  type DieFace,
+  playableActions,
+  roll,
+  skipDie,
   type GameState,
+  type Settings,
   type Stack,
 } from '../src/rules';
 
@@ -21,19 +24,23 @@ const facesRandom = (...faces: number[]) => {
   return () => (faces[i++ % faces.length] - 1) / 6 + 0.01;
 };
 
-function withDice(state: GameState, a: DieFace, b: DieFace): GameState {
-  return roll(state, facesRandom(a, b));
+function rolled(state: GameState, ...faces: number[]): GameState {
+  return roll(state, facesRandom(...faces));
 }
 
-function emptyGame(): GameState {
-  return newGame({ boardMass: 120, pipeHalfWidth: 0.35, startingPieces: 0, forcedMoves: false, doubleCombos: false, diceCount: 2, pieceLimit: 0 });
-}
+const game = (extra: Partial<Settings> = {}) => newGame({ ...DEFAULT_SETTINGS, ...extra });
+const emptyGame = (extra: Partial<Settings> = {}) => game({ startingPieces: 0, ...extra });
 
 function place(state: GameState, id: number, stack: Stack): GameState {
   const stacks = state.stacks.slice();
   stacks[id] = stack;
   return { ...state, stacks };
 }
+
+/** Pass every remaining die (dead or not) to end the turn. */
+const passAll = (state: GameState) => state.dice.reduce((s, d, i) => (d.used || s.phase !== 'act' ? s : skipDie(s, i)), state);
+/** Play a turn that does nothing (a non-double roll, every die passed). */
+const idleTurn = (state: GameState) => passAll(rolled(state, 2, 4));
 
 describe('board geometry', () => {
   it('matches the photographed plate: 52 cells in columns of 2,5,8,7,8,7,8,5,2', () => {
@@ -59,24 +66,17 @@ describe('board geometry', () => {
 
 describe('balance', () => {
   it('starts level with symmetric starting pieces', () => {
-    expect(balance(newGame()).torque).toBe(0);
+    expect(balance(game()).torque).toBe(0);
   });
 
-  it('tips toward Blue and Red wins once enough weight sits on Blue’s edge', () => {
-    let state = emptyGame();
-    state = place(state, SPAWNS.blue[1], { owner: 'red', count: 11 });
-    state = place(state, cellAt(4, 2)!, { owner: 'red', count: 1 });
-    state = withDice(state, 5, 5);
-    // 11 pieces at 3.5 = 38.5, threshold 0.35 * 132 = 46.2 → standing.
+  it('tips toward Blue (Red wins) once torque reaches the threshold', () => {
+    let state = place(emptyGame({ boardMass: 40 }), SPAWNS.blue[1], { owner: 'red', count: 6 });
+    state = place(state, cellAt(4, 6)!, { owner: 'red', count: 1 });
+    // Locked half-width 0.5: 6 × 3.5 − 0.5 = 20.5 vs 0.5 × (40 + 7) = 23.5, standing.
+    state = rolled(state, 5, 2);
     expect(state.phase).toBe('act');
     state = applyAction(state, 0, { kind: 'reinforce', to: SPAWNS.blue[1] });
-    state = applyAction(state, 1, { kind: 'reinforce', to: SPAWNS.blue[1] });
-    // 13 * 3.5 = 45.5 - 2.5 = 43 vs 0.35 * 134 = 46.9 → still standing
-    expect(state.phase).toBe('roll');
-    state = { ...state, turn: 'red' };
-    state = withDice(state, 5, 5);
-    state = applyAction(state, 0, { kind: 'reinforce', to: SPAWNS.blue[1] });
-    state = applyAction(state, 1, { kind: 'reinforce', to: SPAWNS.blue[1] });
+    // 7 × 3.5 − 0.5 = 24 vs 0.5 × 48 = 24: tips.
     expect(state.phase).toBe('over');
     expect(state.loser).toBe('blue');
   });
@@ -86,7 +86,7 @@ describe('actions', () => {
   it('spawn uses your own spawn slots unless an enemy stack blocks them', () => {
     let state = place(emptyGame(), SPAWNS.red[0], { owner: 'blue', count: 3 });
     state = place(state, SPAWNS.red[1], { owner: 'red', count: 2 });
-    state = withDice(state, 1, 1);
+    state = rolled(state, 1, 2);
     expect(legalActions(state, 'spawn').map((a) => a.to)).toEqual([SPAWNS.red[1], SPAWNS.red[2]]);
     state = applyAction(state, 0, { kind: 'spawn', to: SPAWNS.red[1] });
     expect(state.stacks[SPAWNS.red[1]]).toEqual({ owner: 'red', count: 3 });
@@ -97,38 +97,49 @@ describe('actions', () => {
     const blocker = cellAt(4, 8)!;
     let state = place(emptyGame(), from, { owner: 'red', count: 2 });
     state = place(state, blocker, { owner: 'blue', count: 1 });
-    state = withDice(state, 2, 2);
-    const moves = legalActions(state, 'move');
-    expect(moves.some((m) => m.to === blocker)).toBe(false);
-    expect(moves).toContainEqual({ kind: 'move', from, to: cellAt(4, 10)!, jump: true });
+    state = rolled(state, 2, 5);
+    expect(legalActions(state, 'move').some((m) => m.to === blocker)).toBe(false);
     state = applyAction(state, 0, { kind: 'move', from, to: cellAt(4, 10)!, jump: true });
     expect(state.stacks[cellAt(4, 10)!]).toEqual({ owner: 'red', count: 2 });
     expect(state.stacks[from]).toBeNull();
   });
 
-  it('merge combines adjacent friendly stacks', () => {
+  it('a 3 offers merge: two adjacent friendly stacks combine', () => {
     let state = place(emptyGame(), cellAt(4, 6)!, { owner: 'red', count: 2 });
     state = place(state, cellAt(5, 7)!, { owner: 'red', count: 3 });
-    state = withDice(state, 3, 6);
+    state = rolled(state, 3, 5);
     state = applyAction(state, 0, { kind: 'merge', from: cellAt(4, 6)!, to: cellAt(5, 7)! });
     expect(state.stacks[cellAt(5, 7)!]).toEqual({ owner: 'red', count: 5 });
+  });
+
+  it('a 3 also offers split: half a stack, rounded down, moves to an adjacent empty cell', () => {
+    let state = place(emptyGame(), cellAt(4, 6)!, { owner: 'red', count: 7 });
+    state = rolled(state, 3, 5);
+    state = applyAction(state, 0, { kind: 'split', from: cellAt(4, 6)!, to: cellAt(4, 8)! });
+    expect(state.stacks[cellAt(4, 6)!]).toEqual({ owner: 'red', count: 4 });
+    expect(state.stacks[cellAt(4, 8)!]).toEqual({ owner: 'red', count: 3 });
+  });
+
+  it('a single piece cannot split', () => {
+    const state = rolled(place(emptyGame(), cellAt(4, 6)!, { owner: 'red', count: 1 }), 3, 5);
+    expect(legalActions(state, 'split')).toHaveLength(0);
   });
 
   it('strike removes one piece and clears a stack of one', () => {
     let state = place(emptyGame(), cellAt(4, 6)!, { owner: 'red', count: 1 });
     state = place(state, cellAt(4, 8)!, { owner: 'blue', count: 1 });
-    state = withDice(state, 4, 2);
+    state = rolled(state, 4, 2);
     state = applyAction(state, 0, { kind: 'strike', from: cellAt(4, 6)!, to: cellAt(4, 8)! });
     expect(state.stacks[cellAt(4, 8)!]).toBeNull();
   });
 
   it('rejects an action the die does not allow', () => {
-    const state = withDice(newGame(), 1, 1);
+    const state = rolled(game(), 1, 2);
     expect(() => applyAction(state, 0, { kind: 'reinforce', to: SPAWNS.red[0] })).toThrow();
   });
 
   it('passes the turn after both dice are used or skipped', () => {
-    let state = withDice(newGame(), 3, 3);
+    let state = rolled(game(), 3, 4);
     state = skipDie(state, 0);
     expect(state.turn).toBe('red');
     state = skipDie(state, 1);
@@ -137,86 +148,116 @@ describe('actions', () => {
   });
 
   it('forced moves block passing on a playable die but allow passing a dead one', () => {
-    let state = withDice(newGame({ ...newGame().settings, forcedMoves: true }), 5, 4);
+    let state = rolled(game({ forcedMoves: true }), 5, 4);
     expect(() => skipDie(state, 0)).toThrow();
     state = skipDie(state, 1); // strike has no target at the start
     expect(state.dice[1].used).toBe(true);
   });
 
   it('lists each playable action once and prefers a specific die over the wild one', () => {
-    const state = withDice(newGame(), 5, 6);
+    const state = rolled(game(), 5, 6);
     const playable = playableActions(state);
     const reinforce = playable.filter((p) => p.action.kind === 'reinforce');
     expect(reinforce).toHaveLength(3);
     expect(reinforce.every((p) => p.die === 0)).toBe(true);
     expect(playable.some((p) => p.action.kind === 'move' && p.die === 1)).toBe(true);
   });
+
+  it('normalizes old saved settings and drops retired keys', () => {
+    const s = normalizeSettings({ boardMass: 30, pipeHalfWidth: 0.25, doubleCombos: false } as never);
+    expect(s.boardMass).toBe(30);
+    expect('pipeHalfWidth' in s).toBe(false);
+    expect(s.overheat).toBe(false);
+  });
 });
 
-describe('experiments', () => {
-  const combos = (extra = {}) => newGame({ ...newGame().settings, doubleCombos: true, ...extra });
-
+describe('combos (core rule)', () => {
   it('snake eyes gives three forced spawns that cannot be passed', () => {
-    const state = withDice(combos(), 1, 1);
+    const state = rolled(game(), 1, 1);
     expect(state.combo?.name).toBe('Snake eyes');
     expect(state.dice).toHaveLength(3);
     expect(state.dice.every((d) => d.forced && d.action === 'spawn')).toBe(true);
     expect(canPass(state, 0)).toBe(false);
   });
 
+  it('weld gives two merge/splits and two moves', () => {
+    const state = rolled(game(), 3, 3);
+    expect(state.combo?.name).toBe('Weld');
+    expect(state.dice.map((d) => d.action)).toEqual(['mergesplit', 'mergesplit', 'move', 'move']);
+  });
+
   it('double fours convert an adjacent enemy stack of up to three', () => {
     let state = place(emptyGame(), cellAt(4, 6)!, { owner: 'red', count: 1 });
     state = place(state, cellAt(4, 8)!, { owner: 'blue', count: 3 });
-    state = { ...state, settings: { ...state.settings, doubleCombos: true } };
-    state = withDice(state, 4, 4);
+    state = rolled(state, 4, 4);
     expect(state.dice).toHaveLength(1);
     state = applyAction(state, 0, { kind: 'convert', from: cellAt(4, 6)!, to: cellAt(4, 8)! });
     expect(state.stacks[cellAt(4, 8)!]).toEqual({ owner: 'red', count: 3 });
   });
 
   it('jackpot grants a bonus roll; combos still apply on it but cannot chain another roll', () => {
-    let state = withDice(combos(), 6, 6);
-    state = skipDie(skipDie(state, 0), 1);
+    let state = passAll(rolled(game(), 6, 6));
     expect(state.turn).toBe('red');
     expect(state.phase).toBe('roll');
-    state = withDice(state, 6, 6);
+    state = rolled(state, 6, 6);
     expect(state.combo?.name).toBe('Jackpot');
     expect(state.bonusRoll).toBe(false);
   });
 
   it('a pair counts wherever the matching dice sit in a three-dice roll', () => {
     for (const faces of [[4, 2, 4], [4, 4, 2], [2, 4, 4]]) {
-      expect(withDice2(combos({ diceCount: 3 }), faces).combo?.name).toBe('Convert');
+      expect(rolled(game({ diceCount: 3 }), ...faces).combo?.name).toBe('Convert');
     }
   });
 
   it('triple sixes let the player pick a double combo, then roll again', () => {
-    let state = withDice2(combos({ diceCount: 3 }), [6, 6, 6]);
+    let state = rolled(game({ diceCount: 3 }), 6, 6, 6);
     expect(state.comboChoice).toBe(true);
     expect(() => chooseCombo(state, 1)).toThrow();
     state = chooseCombo(state, 2);
     expect(state.dice.filter((d) => d.action === 'move')).toHaveLength(4);
-    state = state.dice.reduce((s, _, i) => skipDie(s, i), state);
+    state = passAll(state);
     expect(state.turn).toBe('red');
     expect(state.isBonusRoll).toBe(true);
   });
+});
 
-  it('three-dice mode rolls three dice and triples trigger their own combo', () => {
-    const three = withDice2(combos({ diceCount: 3 }), [5, 2, 3]);
-    expect(three.dice).toHaveLength(3);
-    const triple = withDice2(combos({ diceCount: 3 }), [6, 6, 6]);
-    expect(triple.combo?.name).toBe('Mother lode');
-    expect(triple.bonusRoll).toBe(true);
-  });
-
+describe('experiments', () => {
   it('piece limit blocks spawning and reinforcing at the cap', () => {
-    const state = withDice(newGame({ ...newGame().settings, pieceLimit: 3 }), 1, 5);
+    const state = rolled(game({ pieceLimit: 3 }), 1, 5);
     expect(piecesOf(state, 'red')).toBe(3);
     expect(playableActions(state).filter((p) => p.action.kind === 'spawn' || p.action.kind === 'reinforce')).toHaveLength(0);
   });
+
+  it('overheat: three spawns on one slot lock it for the owner’s next two turns', () => {
+    const slot = SPAWNS.red[1];
+    let state = rolled(game({ overheat: true }), 1, 1); // snake eyes: three spawns
+    for (let i = 0; i < 3; i++) state = applyAction(state, i, { kind: 'spawn', to: slot });
+    expect(state.event).toMatch(/overheated/);
+    expect(state.turn).toBe('blue');
+    state = idleTurn(state); // blue
+    expect(isOverheated(state, slot)).toBe(true); // red, next turn: locked
+    expect(legalActions(rolled(state, 1, 2), 'spawn').some((a) => a.to === slot)).toBe(false);
+    state = idleTurn(idleTurn(state)); // red, blue
+    expect(isOverheated(state, slot)).toBe(true); // red, second turn: still locked
+    state = idleTurn(idleTurn(state));
+    expect(isOverheated(state, slot)).toBe(false); // cooled
+  });
+
+  it('tower break: a stack over its hidden limit falls through and leaves a hole', () => {
+    let state = emptyGame({ towerBreak: true });
+    state = { ...state, breakLimits: CELLS.map(() => 5) };
+    state = place(state, cellAt(4, 6)!, { owner: 'red', count: 5 });
+    state = rolled(state, 5, 2);
+    state = applyAction(state, 0, { kind: 'reinforce', to: cellAt(4, 6)! });
+    expect(state.stacks[cellAt(4, 6)!]).toBeNull();
+    expect(state.holes).toContain(cellAt(4, 6)!);
+    state = place(state, cellAt(4, 4)!, { owner: 'red', count: 1 });
+    expect(legalActions(state, 'move').some((a) => a.to === cellAt(4, 6)!)).toBe(false);
+  });
+
+  it('tower break limits are hidden but always between 5 and 12', () => {
+    const state = game({ towerBreak: true });
+    expect(state.breakLimits!.every((n) => n >= 5 && n <= 12)).toBe(true);
+  });
 });
-
-function withDice2(state: GameState, faces: number[]): GameState {
-  return roll(state, facesRandom(...faces));
-}
-

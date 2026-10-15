@@ -1408,3 +1408,115 @@ summary,
 :root[data-theme="forge"] .grain {
   opacity: 0.6;
 }
+
+/* Merge / split, holes and spawn heat. */
+:root {
+  --k-split: #5fd4c8;
+}
+:root[data-theme="forge"] {
+  --k-split: #7cc0b0;
+}
+.k-split {
+  color: var(--k-split);
+}
+.die.kind-mergesplit {
+  border-color: color-mix(in srgb, var(--k-merge) 55%, transparent);
+}
+.die.kind-mergesplit .die-label,
+.die.kind-split .die-label {
+  color: var(--k-merge);
+}
+.target-hit.target-split {
+  stroke: var(--k-split);
+}
+.mark-split circle {
+  fill: rgba(8, 30, 30, 0.9);
+  stroke: var(--k-split);
+}
+.mark-split circle.dot {
+  fill: var(--k-split);
+  stroke: none;
+}
+.mark-split path {
+  stroke: var(--k-split);
+}
+.mode-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+.mode-btn {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+.mode-btn.active {
+  border-color: var(--k-move);
+  color: var(--k-move);
+  background: rgba(255, 211, 77, 0.08);
+}
+.mode-btn.k-split.active {
+  border-color: var(--k-split);
+  color: var(--k-split);
+  background: rgba(95, 212, 200, 0.08);
+}
+.hole-wall {
+  fill: #2a2420;
+  stroke: #000;
+  stroke-width: 1.5;
+}
+.hole-through {
+  fill: #050404;
+}
+:root:not([data-theme="forge"]) .hole-wall {
+  stroke: rgba(255, 120, 60, 0.7);
+  filter: drop-shadow(0 0 4px rgba(255, 110, 40, 0.6));
+}
+.heat-glow {
+  pointer-events: none;
+  stroke-width: 2;
+}
+.heat-glow.heat-1 {
+  fill: rgba(255, 140, 40, 0.18);
+  stroke: rgba(255, 150, 50, 0.6);
+}
+.heat-glow.heat-2 {
+  fill: rgba(255, 90, 20, 0.32);
+  stroke: rgba(255, 110, 30, 0.85);
+  filter: drop-shadow(0 0 5px rgba(255, 100, 20, 0.7));
+}
+.heat-glow.overheated {
+  fill: rgba(255, 60, 10, 0.55);
+  stroke: #ffb347;
+  filter: drop-shadow(0 0 8px rgba(255, 80, 10, 0.9));
+}
+.heat-count {
+  text-anchor: middle;
+  font-size: 15px;
+  font-weight: 800;
+  fill: #fff2d9;
+  pointer-events: none;
+}
+.settings input:disabled + span,
+.settings input:disabled {
+  opacity: 0.6;
+}
+.heat-badge circle {
+  fill: #2a0c04;
+  stroke: #ff7a2a;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 6px rgba(255, 90, 20, 0.8));
+}
+.heat-badge text {
+  text-anchor: middle;
+  font-size: 13px;
+  font-weight: 800;
+  fill: #ffd9a8;
+}
+.heat-badge {
+  pointer-events: none;
+}

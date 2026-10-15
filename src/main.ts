@@ -1,12 +1,18 @@
 import './style.css';
 import {
   ACTION_HELP,
-  ACTION_LABELS,
   DEFAULT_SETTINGS,
   DIE_ACTIONS,
   DOUBLE_COMBOS,
   TRIPLE_COMBOS,
   CONVERT_MAX,
+  PIPE_HALF_WIDTH,
+  OVERHEAT_AT,
+  OVERHEAT_TURNS,
+  BREAK_MIN,
+  BREAK_MAX,
+  dieLabel,
+  normalizeSettings,
   CHOOSABLE_COMBOS,
   chooseCombo,
   applyAction,
@@ -44,6 +50,8 @@ interface Online {
 let state: GameState = newGame(loadSettings());
 /** The stack the player has picked up, if any. Everything else is derived from the dice. */
 let selected: number | null = null;
+/** When a picked-up stack can both move and split onto the same tiles, which one a tap does. */
+let splitMode = false;
 let online: Online = { mode: 'local', code: null, status: null, detail: null };
 let host: HostSession | null = null;
 let guest: GuestSession | null = null;
@@ -83,7 +91,7 @@ const gameInProgress = () => state.phase !== 'over' && state.log.length > 1;
 function loadSettings(): Settings {
   try {
     const saved = JSON.parse(localStorage.getItem('hex-balance-settings') ?? 'null');
-    if (saved) return { ...DEFAULT_SETTINGS, ...saved };
+    if (saved) return normalizeSettings(saved);
   } catch {
     // fall through to defaults
   }
@@ -130,7 +138,7 @@ function boardHints(): { sources: Set<number>; targets: Map<number, ActionKind> 
   const sources = new Set<number>();
   const targets = new Map<number, ActionKind>();
   if (selected !== null) {
-    for (const { action } of acts) if (fromOf(action) === selected) targets.set(action.to, action.kind);
+    for (const { action } of selectedOptions()) targets.set(action.to, action.kind);
     return { sources, targets };
   }
   for (const { action } of acts) {
@@ -140,6 +148,22 @@ function boardHints(): { sources: Set<number>; targets: Map<number, ActionKind> 
     else targets.set(action.to, action.kind); // spawning on an empty slot is a single tap
   }
   return { sources, targets };
+}
+
+/** Whether the picked-up stack has both moves and splits available (they share tiles). */
+function canMoveAndSplit(): boolean {
+  if (selected === null) return false;
+  const kinds = new Set(playable().filter((p) => fromOf(p.action) === selected).map((p) => p.action.kind));
+  return kinds.has('move') && kinds.has('split');
+}
+
+/** Actions from the picked-up stack; where a move and a split share a tile, only the chosen one. */
+function selectedOptions(): PlayableAction[] {
+  const acts = playable().filter((p) => fromOf(p.action) === selected);
+  if (!canMoveAndSplit()) return acts;
+  const hidden = splitMode ? 'move' : 'split';
+  const shown = splitMode ? 'split' : 'move';
+  return acts.filter((p) => p.action.kind !== hidden || !acts.some((q) => q.action.kind === shown && q.action.to === p.action.to));
 }
 
 /** In-place actions offered on the selected stack (shown as buttons above it). */
@@ -203,7 +227,8 @@ function passRemaining() {
 
 /** The host applies the guest's intents only on Blue's turn (or to restart a finished game). */
 function onGuestIntent(intent: Intent) {
-  const allowed = intent.type === 'new' ? state.phase === 'over' : state.turn === 'blue';
+  // Only the host restarts or changes settings; the guest may only play Blue's turns.
+  const allowed = intent.type !== 'new' && state.turn === 'blue';
   if (!allowed) return host?.send(state);
   try {
     setState(resolveIntent(state, intent));
@@ -252,7 +277,7 @@ function startHost(code = newRoomCode(), resume = false) {
   leaveOnline(false);
   if (resume) {
     const saved = loadHostState(code);
-    if (saved) state = { ...saved, settings: { ...DEFAULT_SETTINGS, ...saved.settings } };
+    if (saved) state = { ...saved, settings: normalizeSettings(saved.settings) };
   } else {
     state = newGame(state.settings);
   }
@@ -272,7 +297,7 @@ function startGuest(code: string) {
   guest = new GuestSession(code, {
     onStatus: setStatus,
     onState: (next) => {
-      state = { ...next, settings: { ...DEFAULT_SETTINGS, ...next.settings } };
+      state = { ...next, settings: normalizeSettings(next.settings) };
       selected = null;
       render();
     },
@@ -307,7 +332,7 @@ function onCellTap(id: number) {
 
   // With a stack picked up, a highlighted destination performs that action.
   if (selected !== null) {
-    const hit = acts.find((p) => fromOf(p.action) === selected && p.action.to === id);
+    const hit = selectedOptions().find((p) => p.action.to === id);
     if (hit) return dispatch({ type: 'act', die: hit.die, action: hit.action });
     if (id === selected) {
       selected = null;
@@ -329,6 +354,7 @@ function onCellTap(id: number) {
   const onHere = acts.filter((p) => inPlace(p.action) && p.action.to === id);
   if (!fromHere.length && onHere.length === 1) return dispatch({ type: 'act', die: onHere[0].die, action: onHere[0].action });
   selected = fromHere.length || onHere.length ? id : null;
+  splitMode = false;
   render();
 }
 
@@ -340,7 +366,7 @@ function previewRatio(action: Action | null): number | null {
 /** The action a tap on this cell would perform right now, for the balance preview. */
 function actionForCell(id: number): Action | null {
   const acts = playable();
-  if (selected !== null) return acts.find((p) => fromOf(p.action) === selected && p.action.to === id)?.action ?? null;
+  if (selected !== null) return selectedOptions().find((p) => p.action.to === id)?.action ?? null;
   if (!state.stacks[id]) return acts.find((p) => p.action.kind === 'spawn' && p.action.to === id)?.action ?? null;
   const fromHere = acts.filter((p) => fromOf(p.action) === id);
   const onHere = acts.filter((p) => inPlace(p.action) && p.action.to === id);
@@ -368,7 +394,9 @@ function drawBoard() {
   const hints = boardHints();
   const view = renderBoard({
     stacks: state.stacks,
-    pipeHalfWidth: state.settings.pipeHalfWidth,
+    pipeHalfWidth: PIPE_HALF_WIDTH,
+    holes: new Set(state.holes ?? []),
+    heat: state.settings.overheat ? new Map(Object.entries(state.heat ?? {}).map(([k, v]) => [Number(k), v])) : new Map(),
     lean: shownLean + shakeLean,
     yaw: viewYaw,
     theme,
@@ -486,6 +514,8 @@ function dicePanel(): string {
   if (state.phase === 'over') return '';
   const mine = canAct();
   if (state.phase === 'roll') {
+    const ev = eventBanner();
+    if (ev) return ev + (mine ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>` : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`);
     return mine
       ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>`
       : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`;
@@ -505,7 +535,7 @@ function dicePanel(): string {
       const status = die.used ? 'used' : dead ? 'no legal move' : die.forced ? 'forced' : die.bonus ? 'bonus' : 'available';
       return `<div class="die ${die.used ? 'used' : ''} ${dead ? 'dead' : ''} ${die.forced ? 'forced' : ''} ${die.bonus ? 'bonus' : ''} kind-${meaning}">
         ${dieFace(die.face)}
-        <span class="die-text"><span class="die-label">${meaning === 'wild' ? 'Wild' : ACTION_LABELS[meaning]}</span><span class="die-status">${status}</span></span>
+        <span class="die-text"><span class="die-label">${dieLabel(meaning)}</span><span class="die-status">${status}</span></span>
       </div>`;
     })
     .join('');
@@ -517,10 +547,19 @@ function dicePanel(): string {
   const banner = state.combo
     ? `<div class="combo combo-${state.combo.tone}"><strong>${state.combo.name}!</strong> ${state.combo.text}</div>`
     : '';
-  return `${banner}<div class="dice-row dice-${state.dice.length > 3 ? 'many' : state.dice.length}">${dice}</div>${inPlaceButtons()}${endTurn}`;
+  const modes = canMoveAndSplit() && mine
+    ? `<div class="mode-row"><button class="mode-btn ${splitMode ? '' : 'active'}" data-mode="move">Move whole stack</button><button class="mode-btn k-split ${splitMode ? 'active' : ''}" data-mode="split">Split off ${Math.floor((state.stacks[selected!]?.count ?? 0) / 2)}</button></div>`
+    : '';
+  return `${banner}${eventBanner()}<div class="dice-row dice-${state.dice.length > 3 ? 'many' : state.dice.length}">${dice}</div>${modes}${inPlaceButtons()}${endTurn}`;
+}
+
+/** Overheats and breakthroughs from the last action, shown until the next one. */
+function eventBanner(): string {
+  return state.event ? `<div class="combo combo-bad event">${state.event}</div>` : '';
 }
 
 const KIND_WORD: Record<ActionKind, string> = {
+  split: '<span class="k-split">½ split</span>',
   spawn: '<span class="k-spawn">+ spawn</span>',
   move: '<span class="k-move">● move</span>',
   merge: '<span class="k-merge">merge</span>',
@@ -642,25 +681,27 @@ function themePanel(): string {
 }
 
 function settingsPanel(): string {
-  if (online.mode === 'guest') return '';
+  const locked = online.mode === 'guest';
+  const off = locked ? 'disabled' : '';
   const s = state.settings;
-  const edgePieces = Math.ceil((s.pipeHalfWidth * s.boardMass) / (3.5 - s.pipeHalfWidth));
+  const edgePieces = Math.ceil((PIPE_HALF_WIDTH * s.boardMass) / (3.5 - PIPE_HALF_WIDTH));
   const check = (name: string, on: boolean, label: string) =>
-    `<label class="check"><input type="checkbox" name="${name}" ${on ? 'checked' : ''} /><span>${label}</span></label>`;
+    `<label class="check"><input type="checkbox" name="${name}" ${on ? 'checked' : ''} ${off} /><span>${label}</span></label>`;
   return `<details class="panel settings">
     <summary>Settings and experiments</summary>
+    ${locked ? '<p class="muted">Only the host can change settings or start a new game.</p>' : ''}
     <h4>Weight</h4>
-    <label>Plate mass <span>(piece-weights)</span><input type="number" name="boardMass" min="0" step="5" value="${s.boardMass}" /></label>
-    <label>Pipe half-width <span>(cell heights)</span><input type="number" name="pipeHalfWidth" min="0.05" step="0.05" value="${s.pipeHalfWidth}" /></label>
-    <label>Starting pieces per spawn slot<input type="number" name="startingPieces" min="0" max="5" step="1" value="${s.startingPieces}" /></label>
-    <p class="muted">With these values, about ${edgePieces} unopposed pieces on a far edge tip the board.</p>
+    <label>Plate mass <span>(piece-weights)</span><input type="number" name="boardMass" min="0" step="5" value="${s.boardMass}" ${off} /></label>
+    <label>Starting pieces per spawn slot<input type="number" name="startingPieces" min="0" max="5" step="1" value="${s.startingPieces}" ${off} /></label>
+    <p class="muted">Pipe half-width is locked at ${PIPE_HALF_WIDTH}. With these values, about ${edgePieces} unopposed pieces on a far edge tip the board.</p>
     <h4>Rules</h4>
     ${check('forcedMoves', s.forcedMoves, '<strong>Forced moves</strong>: you must use every die that has a legal move, even a bad one')}
     <h4>Experiments</h4>
-    ${check('doubleCombos', s.doubleCombos, '<strong>Doubles combos</strong>: matching dice trigger a combo (see Rules)')}
-    ${check('threeDice', s.diceCount === 3, '<strong>Three dice</strong>: roll three dice a turn; with combos on, three of a kind is a triple combo')}
-    <label>Piece limit per player <span>(0 = no limit)</span><input type="number" name="pieceLimit" min="0" max="99" step="1" value="${s.pieceLimit}" /></label>
-    <button class="ghost-btn" data-act="apply-settings">Apply and restart</button>
+    ${check('threeDice', s.diceCount === 3, '<strong>Three dice</strong>: roll three dice a turn; three of a kind is a triple combo')}
+    ${check('overheat', s.overheat, `<strong>Overheating spawns</strong>: each spawn heats its slot; ${OVERHEAT_AT} heat locks it for your next ${OVERHEAT_TURNS} turns. Slots cool by one each of your turns`)}
+    ${check('towerBreak', s.towerBreak, `<strong>Breaking point</strong>: every cell hides a height limit (${BREAK_MIN}-${BREAK_MAX}). Stack past it and the tower punches through, leaving a permanent hole`)}
+    <label>Piece limit per player <span>(0 = no limit)</span><input type="number" name="pieceLimit" min="0" max="99" step="1" value="${s.pieceLimit}" ${off} /></label>
+    ${locked ? '' : '<button class="ghost-btn" data-act="apply-settings">Apply and restart</button>'}
   </details>`;
 }
 
@@ -678,14 +719,17 @@ function rulesPanel(): string {
   const rows = ([1, 2, 3, 4, 5, 6] as DieFace[])
     .map((f) => {
       const m = DIE_ACTIONS[f];
-      return `<tr><td>${f}</td><td>${m === 'wild' ? 'Wild' : ACTION_LABELS[m]}</td><td>${m === 'wild' ? 'Any of the actions above.' : ACTION_HELP[m]}</td></tr>`;
+      const help = m === 'wild' ? 'Any of the actions above.' : m === 'mergesplit' ? `${ACTION_HELP.merge} Or: ${ACTION_HELP.split.toLowerCase()}` : ACTION_HELP[m];
+      return `<tr><td>${f}</td><td>${dieLabel(m)}</td><td>${help}</td></tr>`;
     })
     .join('');
   return `<details class="panel rules">
     <summary>Rules</summary>
     <p>The plate balances on a square pipe across its middle. Each player owns the half on their side of the pipe, with three spawn slots on its outer edge. Weight far from the pipe counts more. If the board tips toward you, you lose — so push your stacks onto your opponent's side.</p>
     <table>${rows}</table>
-    ${state.settings.doubleCombos ? comboTable() : ''}
+    ${comboTable()}
+    ${state.settings.overheat ? `<p class="muted">Overheating spawns: each spawn adds heat to its slot. At ${OVERHEAT_AT} heat the slot locks for your next ${OVERHEAT_TURNS} turns; otherwise it cools by one at the start of each of your turns.</p>` : ''}
+    ${state.settings.towerBreak ? `<p class="muted">Breaking point: every cell hides a height limit between ${BREAK_MIN} and ${BREAK_MAX}. A stack taller than its cell's limit falls through and leaves a permanent hole nothing can enter.</p>` : ''}
     ${state.settings.pieceLimit > 0 ? `<p class="muted">Piece limit: each player may have at most ${state.settings.pieceLimit} pieces on the board. Spawn and reinforce stop at the cap.</p>` : ''}
     <p class="muted">Each turn roll ${state.settings.diceCount === 3 ? 'three' : 'two'} dice; each die is one action, used in any order. Tap a stack to pick it up and see where it can go, or tap a spawn slot to spawn. Dice with no legal move are skipped automatically. Enemy stacks block movement, and an enemy stack on your spawn slot stops you spawning there. The board can tip after any action, including toward the player who moved.</p>
   </details>`;
@@ -696,7 +740,9 @@ function resultCard(): string {
   const winner = other(state.loser!);
   const me = myColor();
   const title = me ? (winner === me ? 'You win' : 'You lose') : `${playerName(winner)} wins`;
-  return `<div class="result"><div class="result-card"><h2 class="c-${winner}">${title}</h2><p>The board tipped toward ${playerName(state.loser!)}.</p><button class="roll-btn turn-${winner}" data-act="new">Play again</button></div></div>`;
+  return `<div class="result"><div class="result-card"><h2 class="c-${winner}">${title}</h2><p>The board tipped toward ${playerName(state.loser!)}.</p>${
+    online.mode === 'guest' ? '<p class="muted">Waiting for the host to start a new game.</p>' : `<button class="roll-btn turn-${winner}" data-act="new">Play again</button>`
+  }</div></div>`;
 }
 
 function render() {
@@ -751,7 +797,7 @@ app.addEventListener('click', (event) => {
   const act = el.closest<HTMLElement>('[data-act]')?.dataset.act;
   if (act === 'roll') return canAct() && dispatch({ type: 'roll' });
   if (act === 'new') {
-    if (online.mode === 'guest' && state.phase !== 'over') return;
+    if (online.mode === 'guest') return;
     if (gameInProgress() && !confirm('Start a new game? The current game will be lost.')) return;
     return dispatch({ type: 'new' });
   }
@@ -764,6 +810,11 @@ app.addEventListener('click', (event) => {
     return leaveOnline();
   }
   if (act === 'end-turn') return canAct() && passRemaining();
+  const mode = el.closest<HTMLElement>('[data-mode]')?.dataset.mode;
+  if (mode) {
+    splitMode = mode === 'split';
+    return render();
+  }
   const choose = el.closest<HTMLElement>('[data-choose]')?.dataset.choose;
   if (choose && canAct() && state.comboChoice) return dispatch({ type: 'choose', face: Number(choose) as DieFace });
   if (act === 'copy') {
@@ -776,13 +827,14 @@ app.addEventListener('click', (event) => {
     return;
   }
   if (act === 'apply-settings') {
+    if (online.mode === 'guest') return;
     const read = (name: string) => Number(app.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.value);
     const settings: Settings = {
       boardMass: Math.max(0, read('boardMass') || 0),
-      pipeHalfWidth: Math.max(0.05, read('pipeHalfWidth') || DEFAULT_SETTINGS.pipeHalfWidth),
       startingPieces: Math.max(0, Math.min(5, Math.round(read('startingPieces') || 0))),
       forcedMoves: app.querySelector<HTMLInputElement>('input[name="forcedMoves"]')!.checked,
-      doubleCombos: app.querySelector<HTMLInputElement>('input[name="doubleCombos"]')!.checked,
+      overheat: app.querySelector<HTMLInputElement>('input[name="overheat"]')!.checked,
+      towerBreak: app.querySelector<HTMLInputElement>('input[name="towerBreak"]')!.checked,
       diceCount: app.querySelector<HTMLInputElement>('input[name="threeDice"]')!.checked ? 3 : 2,
       pieceLimit: Math.max(0, Math.min(99, Math.round(read('pieceLimit') || 0))),
     };
