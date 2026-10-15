@@ -275,6 +275,32 @@ export function dieIsPlayable(state: GameState, dieIndex: number): boolean {
   return !!die && allowedKinds(die.face).some((kind) => legalActions(state, kind).length > 0);
 }
 
+export interface PlayableAction {
+  die: number;
+  action: Action;
+}
+
+/**
+ * Every action the current player can take with any unused die. Each action appears
+ * once; when several dice allow it, the specific die is preferred over a wild one.
+ */
+export function playableActions(state: GameState): PlayableAction[] {
+  if (state.phase !== 'act') return [];
+  const order = state.dice
+    .map((die, i) => ({ die, i }))
+    .filter(({ die }) => !die.used)
+    .sort((a, b) => Number(DIE_ACTIONS[a.die.face] === 'wild') - Number(DIE_ACTIONS[b.die.face] === 'wild'));
+  const out: PlayableAction[] = [];
+  for (const { die, i } of order) {
+    for (const kind of allowedKinds(die.face)) {
+      for (const action of legalActions(state, kind)) {
+        if (!out.some((p) => sameAction(p.action, action))) out.push({ die: i, action });
+      }
+    }
+  }
+  return out;
+}
+
 export function canPass(state: GameState, dieIndex: number): boolean {
   return !state.settings.forcedMoves || !dieIsPlayable(state, dieIndex);
 }
@@ -285,7 +311,8 @@ export function skipDie(state: GameState, dieIndex: number): GameState {
   if (!die || die.used) throw new Error('That die is not available.');
   if (!canPass(state, dieIndex)) throw new Error('Forced moves are on: this die has a legal action.');
   const dice = state.dice.map((d, i) => (i === dieIndex ? { ...d, used: true } : d));
-  return settle({ ...state, dice, log: [...state.log, `${playerName(state.turn)} passed on a ${die.face}.`] });
+  const note = dieIsPlayable(state, dieIndex) ? `passed on a ${die.face}` : `had no legal move for a ${die.face}`;
+  return settle({ ...state, dice, log: [...state.log, `${playerName(state.turn)} ${note}.`] });
 }
 
 function settle(state: GameState): GameState {

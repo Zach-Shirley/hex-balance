@@ -134,8 +134,6 @@ export interface RenderedBoard {
   under: string;
   /** Plate, slots and stacks: everything that leans about the pipe. */
   board: string;
-  /** Vertical position of the pivot within the viewBox, in percent (for CSS sway). */
-  pivotPct: number;
 }
 
 export function renderBoard(view: BoardView): RenderedBoard {
@@ -190,14 +188,28 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const [cx, cy] = boardXY(id);
     const spawn = spawnOwner.get(id);
     const target = view.targets.get(id);
-    const classes = ['slot', spawn ? `spawn spawn-${spawn}` : '', view.sources.has(id) ? 'is-source' : '', target ? 'is-target' : '']
+    const classes = ['slot', spawn ? `spawn spawn-${spawn}` : '', view.sources.has(id) ? 'is-source' : '', target ? `is-target target-${target}` : '']
       .filter(Boolean)
       .join(' ');
     const hex = (r: number) => fmt(hex2(cx, cy, r).map(([x, y]) => P([x, y, 0]).p));
     out.push(`<g class="${classes}" data-id="${id}"><polygon class="slot-hex" points="${hex(R - 3)}" />${spawn ? `<polygon class="spawn-ring" points="${hex(R - 8)}" />` : ''}</g>`);
   }
 
-  // Stacks, far to near.
+  /**
+   * Affine transform that lays text flat on the plate at (x, y, z), upright for the camera,
+   * so numbers lean and foreshorten with the stack tops.
+   */
+  const faceMatrix = (x: number, y: number, z: number) => {
+    const ux: V2 = [Math.cos(view.yaw), -Math.sin(view.yaw)]; // board direction that reads as screen-right
+    const uy: V2 = [Math.sin(view.yaw), Math.cos(view.yaw)]; // board direction that reads as screen-down
+    const o = P([x, y, z]).p;
+    const ex = P([x + ux[0], y + ux[1], z]).p;
+    const ey = P([x + uy[0], y + uy[1], z]).p;
+    return `matrix(${[ex[0] - o[0], ex[1] - o[1], ey[0] - o[0], ey[1] - o[1], o[0], o[1]].map((n) => n.toFixed(3)).join(' ')})`;
+  };
+
+  // Stacks, far to near. `tops` keeps each stack's projected top centre for badges and popovers.
+  const tops = new Map<number, V2>();
   const order = view.stacks
     .map((stack, id) => ({ stack, id, depth: P([...boardXY(id), 0]).depth }))
     .filter((s): s is { stack: Stack; id: number; depth: number } => s.stack !== null)
@@ -230,29 +242,38 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const top = fmt(ring.map(([x, y]) => P([x, y, height]).p));
     const sheen = fmt(hex2(cx, cy, r - 6).map(([x, y]) => P([x, y, height]).p));
     const label = P([cx, cy, height]).p;
-    const classes = ['stack', `owner-${stack.owner}`, view.sources.has(id) ? 'is-source' : '', view.from === id ? 'is-from' : '', view.targets.has(id) ? 'is-target' : '']
+    tops.set(id, label);
+    const target = view.targets.get(id);
+    const classes = ['stack', `owner-${stack.owner}`, view.sources.has(id) ? 'is-source' : '', view.from === id ? 'is-from' : '', target ? `is-target target-${target}` : '']
       .filter(Boolean)
       .join(' ');
-    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" /><polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" x="${label[0].toFixed(1)}" y="${(label[1] + 6).toFixed(1)}">${stack.count}</text></g>`);
+    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" /><polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
   }
 
   // Destination outlines drawn above everything, so a tall stack in front never hides
-  // or blocks the tile behind it. Empty destinations also get a dot.
-  for (const [id] of view.targets) {
+  // or blocks the tile behind it. Each action kind has its own colour and marker.
+  const ry = Math.sin(CAMERA_ELEVATION);
+  for (const [id, kind] of view.targets) {
     const [cx, cy] = boardXY(id);
     const hex = fmt(hex2(cx, cy, R - 3).map(([x, y]) => P([x, y, 0]).p));
-    out.push(`<polygon class="target-hit" data-id="${id}" points="${hex}" />`);
-    if (view.stacks[id]) continue;
-    const [x, y] = P([cx, cy, 0]).p;
-    out.push(`<ellipse class="target-dot" data-id="${id}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="7" ry="${(7 * Math.sin(CAMERA_ELEVATION)).toFixed(1)}" />`);
+    out.push(`<polygon class="target-hit target-${kind}" data-id="${id}" points="${hex}" />`);
+    const [x, y] = view.stacks[id] ? tops.get(id)! : P([cx, cy, 0]).p;
+    const at = `translate(${x.toFixed(1)} ${(view.stacks[id] ? y - 22 : y).toFixed(1)})`;
+    if (kind === 'move') {
+      out.push(`<ellipse class="mark mark-move" data-id="${id}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="7" ry="${(7 * ry).toFixed(1)}" />`);
+    } else if (kind === 'spawn') {
+      out.push(`<g class="mark mark-spawn" data-id="${id}" transform="${at}"><circle r="11" /><path d="M-6 0H6M0 -6V6" /></g>`);
+    } else if (kind === 'merge') {
+      out.push(`<g class="mark mark-merge" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-6 -4L0 3L6 -4M-6 3H6" /></g>`);
+    } else if (kind === 'strike') {
+      out.push(`<g class="mark mark-strike" data-id="${id}" transform="${at}"><circle r="12" /><path d="M-5 -5L5 5M5 -5L-5 5" /></g>`);
+    }
   }
 
   const viewBox = `${VIEWBOX.x.toFixed(0)} ${VIEWBOX.y.toFixed(0)} ${VIEWBOX.w.toFixed(0)} ${VIEWBOX.h.toFixed(0)}`;
-  const pivotY = project([0, 0, -PLATE_T], { lean: 0, yaw: view.yaw }, false).p[1];
 
   return {
     under: `<svg class="board-under" viewBox="${viewBox}" aria-hidden="true">${under.join('')}</svg>`,
-    pivotPct: ((pivotY - VIEWBOX.y) / VIEWBOX.h) * 100,
     board: `<svg class="board" viewBox="${viewBox}" role="img" aria-label="Hexagonal balance board">
     <defs>
       <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">

@@ -7,6 +7,7 @@ import {
   newGame,
   roll,
   skipDie,
+  playableActions,
   type DieFace,
   type GameState,
   type Stack,
@@ -137,5 +138,14 @@ describe('actions', () => {
     expect(() => skipDie(state, 0)).toThrow();
     state = skipDie(state, 1); // strike has no target at the start
     expect(state.dice[1].used).toBe(true);
+  });
+
+  it('lists each playable action once and prefers a specific die over the wild one', () => {
+    const state = withDice(newGame(), 5, 6);
+    const playable = playableActions(state);
+    const reinforce = playable.filter((p) => p.action.kind === 'reinforce');
+    expect(reinforce).toHaveLength(3);
+    expect(reinforce.every((p) => p.die === 0)).toBe(true);
+    expect(playable.some((p) => p.action.kind === 'move' && p.die === 1)).toBe(true);
   });
 });

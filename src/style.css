@@ -168,20 +168,6 @@ button {
   pointer-events: none;
 }
 
-/* Near tipping, the plate rocks gently about the pipe toward the sinking side. */
-.board.swaying {
-  animation: sway 0.95s ease-in-out infinite alternate;
-}
-
-@keyframes sway {
-  from {
-    transform: perspective(900px) rotateX(0deg);
-  }
-  to {
-    transform: perspective(900px) rotateX(var(--sway));
-  }
-}
-
 .stage-row {
   display: flex;
   align-items: center;
@@ -338,35 +324,63 @@ button {
   stroke: rgba(74, 168, 255, 0.6);
 }
 
-.slot.is-target {
-  cursor: pointer;
-}
-.slot.is-target .slot-hex {
-  fill: #2a2228;
-  stroke: #ffd34d;
-  stroke-width: 2;
-}
-.slot.is-target:hover .slot-hex {
-  fill: #3a2f2a;
+/* ---------- Action colours ---------- */
+
+:root {
+  --k-move: #ffd34d;
+  --k-spawn: #ffd34d;
+  --k-merge: #3ddc84;
+  --k-strike: #ff8a3d;
+  --k-reinforce: #7fe0ff;
 }
 
-/* Destination outline drawn on top of every stack so it stays visible and clickable. */
+.k-move { color: var(--k-move); }
+.k-spawn { color: var(--k-spawn); }
+.k-merge { color: var(--k-merge); }
+.k-strike { color: var(--k-strike); }
+.k-reinforce { color: var(--k-reinforce); }
+
+/* Destination outlines, drawn above all stacks so they stay visible and tappable. */
 .target-hit {
-  fill: rgba(255, 211, 77, 0.04);
-  stroke: #ffd34d;
-  stroke-width: 1.6;
+  fill: rgba(255, 255, 255, 0.03);
+  stroke-width: 1.8;
   stroke-dasharray: 5 4;
   cursor: pointer;
 }
-.target-hit:hover {
-  fill: rgba(255, 211, 77, 0.16);
+.target-hit.target-move,
+.target-hit.target-spawn { stroke: var(--k-move); }
+.target-hit.target-merge { stroke: var(--k-merge); stroke-dasharray: none; }
+.target-hit.target-strike { stroke: var(--k-strike); stroke-dasharray: none; }
+.target-hit:hover { fill: rgba(255, 255, 255, 0.12); }
+
+.mark {
+  cursor: pointer;
+}
+.mark-move {
+  fill: var(--k-move);
+  filter: drop-shadow(0 0 6px var(--k-move));
+}
+.mark circle {
+  stroke-width: 2;
+}
+.mark path {
+  fill: none;
+  stroke-width: 2.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mark-spawn circle { fill: rgba(20, 16, 10, 0.85); stroke: var(--k-spawn); }
+.mark-spawn path { stroke: var(--k-spawn); }
+.mark-merge circle { fill: rgba(8, 30, 18, 0.9); stroke: var(--k-merge); }
+.mark-merge path { stroke: var(--k-merge); }
+.mark-strike circle { fill: rgba(40, 14, 6, 0.9); stroke: var(--k-strike); }
+.mark-strike path { stroke: var(--k-strike); }
+.mark-spawn, .mark-merge, .mark-strike {
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
 }
 
-.target-dot {
-  fill: #ffd34d;
-  opacity: 0.85;
-  cursor: pointer;
-  filter: drop-shadow(0 0 6px #ffd34d);
+.slot.is-target .slot-hex {
+  fill: #221e22;
 }
 
 .piece-side {
@@ -429,15 +443,6 @@ button {
   stroke-dasharray: none;
   filter: drop-shadow(0 0 9px #ffd34d);
 }
-.stack.is-target {
-  cursor: pointer;
-}
-.stack.is-target .piece-top {
-  stroke: #ffd34d;
-  stroke-width: 4;
-  filter: drop-shadow(0 0 10px #ffd34d);
-}
-
 /* ---------- Sidebar ---------- */
 
 .sidebar {
@@ -486,47 +491,43 @@ button {
 .dice-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 
 .die {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-}
-
-.die-btn {
-  display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 12px 8px 10px;
+  gap: 10px;
+  padding: 10px 12px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
-  border: 2px solid rgba(255, 255, 255, 0.08);
-  transition: border-color 0.15s, background 0.15s;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  transition: opacity 0.2s, border-color 0.2s;
 }
-.die-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-}
-.die.selected .die-btn {
-  border-color: #ffd34d;
-  background: rgba(255, 211, 77, 0.08);
-}
+.die.kind-move, .die.kind-spawn { border-color: color-mix(in srgb, var(--k-move) 55%, transparent); }
+.die.kind-merge { border-color: color-mix(in srgb, var(--k-merge) 55%, transparent); }
+.die.kind-strike { border-color: color-mix(in srgb, var(--k-strike) 55%, transparent); }
+.die.kind-reinforce { border-color: color-mix(in srgb, var(--k-reinforce) 55%, transparent); }
+.die.kind-wild { border-color: rgba(255, 255, 255, 0.45); }
+.die.kind-move .die-label, .die.kind-spawn .die-label { color: var(--k-move); }
+.die.kind-merge .die-label { color: var(--k-merge); }
+.die.kind-strike .die-label { color: var(--k-strike); }
+.die.kind-reinforce .die-label { color: var(--k-reinforce); }
+
 .die.used {
-  opacity: 0.35;
+  opacity: 0.3;
 }
-.die.used .die-btn {
-  cursor: default;
-}
-.die.dead .die-btn {
+.die.dead {
+  opacity: 0.4;
   border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.18);
+  filter: grayscale(1);
 }
 
 .die-face {
-  width: 54px;
-  height: 54px;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
 }
 .die-face rect {
   fill: #f1edef;
@@ -535,50 +536,52 @@ button {
   fill: #1c171b;
 }
 
+.die-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .die-label {
   font-weight: 700;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
 }
-.die-note,
-.die-used {
+.die-status {
   font-size: 0.72rem;
   color: var(--muted);
-  text-align: center;
 }
 
-.pass-btn {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  padding: 3px 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-.pass-btn:hover {
-  color: var(--text);
+.end-turn {
+  width: 100%;
+  margin-top: 10px;
 }
 
-.wild-choices {
+.hint .k-move, .hint .k-spawn, .hint .k-merge, .hint .k-strike, .hint .k-reinforce {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.inplace-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 10px;
+}
+.inplace-row .pop-btn {
+  flex: 1;
 }
 
-.chip {
-  padding: 5px 11px;
+.pop-btn {
+  padding: 7px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.04);
+  border: 2px solid currentColor;
+  background: rgba(14, 12, 16, 0.94);
+  font-weight: 700;
   font-size: 0.82rem;
+  white-space: nowrap;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
 }
-.chip.active {
-  border-color: #ffd34d;
-  color: #ffd34d;
-}
-.chip:disabled {
-  opacity: 0.35;
-  cursor: default;
+.pop-btn:hover {
+  background: rgba(40, 36, 44, 0.96);
 }
 
 .hint {
@@ -883,38 +886,18 @@ details summary {
     gap: 8px;
   }
   .die {
-    flex-direction: row;
-    align-items: center;
-  }
-  .die-btn {
-    flex: 1;
-    flex-direction: row;
-    justify-content: center;
     padding: 6px 8px;
     gap: 8px;
   }
   .die-face {
-    width: 34px;
-    height: 34px;
+    width: 32px;
+    height: 32px;
   }
   .die-label {
     font-size: 0.82rem;
   }
-  .die-note {
-    display: none;
-  }
-  .die.dead .die-label::after {
-    content: ' ✕';
-    color: var(--muted);
-  }
-  .pass-btn {
-    padding: 8px 10px;
-  }
-  .die-used {
-    padding: 0 6px;
-  }
-  .wild-choices {
-    margin-top: 8px;
+  .die-status {
+    font-size: 0.66rem;
   }
   .waiting {
     padding: 12px;
@@ -922,7 +905,11 @@ details summary {
 
   /* Room for the fixed action bar at the bottom of the page. */
   .sidebar {
-    padding-bottom: 170px;
+    padding-bottom: 230px;
+  }
+  .end-turn {
+    margin-top: 8px;
+    padding: 6px 12px;
   }
 
   .result-card {
