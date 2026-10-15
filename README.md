@@ -2,7 +2,7 @@
 
 A browser recreation of the steel hexagonal balance game Zach Shirley and a friend built in a high-school metalworking class. "Hex Balance" is a working title; the original name is not known.
 
-The board is a hexagonal steel plate balanced on a square pipe that runs across its middle. Red's half is the top and Blue's half is the bottom. Players add, move, merge and strike stacks of hexagonal steel pieces. If the board tips toward you, you lose.
+The board is a hexagonal steel plate balanced on a square pipe that runs across its middle. Each player owns the half on their side of the pipe. Players add, move, merge and strike stacks of hexagonal steel pieces. If the board tips toward you, you lose.
 
 Status: playable hot-seat on one device, or online between two devices. The rules are a reconstruction from memory and are expected to change.
 
@@ -62,7 +62,7 @@ These values can be changed in the in-game **Weight settings** panel.
 
 - `src/board.ts`: board geometry, neighbours, spawn slots, lever arms
 - `src/rules.ts`: game state, legal actions, dice, balance and tipping (pure, no DOM)
-- `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks (camera 50° above the near edge; lean rotates the plate about the pipe)
+- `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks (camera 50 degrees above the near edge; lean rotates the plate about the pipe)
 - `src/net.ts`: PeerJS host/guest sessions
 - `src/main.ts`, `src/style.css`: UI, dice panel, balance meter, lean and tip animation, online panel
 - `tests/rules.test.ts`: geometry, balance and action tests
