@@ -112,9 +112,9 @@ export const VIEWBOX = (() => {
   }
   const xs = pts.map((p) => p[0]);
   const ys = pts.map((p) => p[1]);
-  const minX = Math.min(...xs) - 60;
-  const minY = Math.min(...ys) - 70;
-  return { x: minX, y: minY, w: Math.max(...xs) + 60 - minX, h: Math.max(...ys) + 70 - minY };
+  const minX = Math.min(...xs) - 64;
+  const minY = Math.min(...ys) - 36;
+  return { x: minX, y: minY, w: Math.max(...xs) + 64 - minX, h: Math.max(...ys) + 30 - minY };
 })();
 
 export function renderBoard(view: BoardView): string {

@@ -21,6 +21,7 @@
 html,
 body {
   margin: 0;
+  overflow-x: hidden;
   min-height: 100%;
   background:
     radial-gradient(ellipse at 50% 35%, rgba(150, 22, 40, 0.28), transparent 60%),
@@ -40,6 +41,7 @@ body {
 }
 
 button {
+  touch-action: manipulation;
   font: inherit;
   color: inherit;
   cursor: pointer;
@@ -242,6 +244,8 @@ button {
 /* ---------- Board ---------- */
 
 .board {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   display: block;
   width: 100%;
   height: auto;
@@ -713,4 +717,136 @@ details summary {
 }
 .waiting.turn-blue {
   color: var(--blue);
+}
+
+/* ---------- Phones ---------- */
+
+@media (hover: none) {
+  .roll-btn kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 700px) {
+  .long {
+    display: none;
+  }
+  #app {
+    padding: 12px 16px 0;
+  }
+
+  .top {
+    gap: 8px;
+  }
+  .top h1 {
+    font-size: 1.05rem;
+    margin-right: auto;
+    white-space: nowrap;
+  }
+  .turn {
+    margin-left: 0;
+    padding: 5px 10px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .top .ghost-btn {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .balance {
+    margin-top: 12px;
+  }
+  .balance-ends {
+    font-size: 0.72rem;
+  }
+  .balance-status {
+    text-align: center;
+    padding: 0 6px;
+  }
+  .balance-meta {
+    font-size: 0.7rem;
+  }
+
+  .layout {
+    gap: 12px;
+  }
+
+  /* Let the board use the full screen width for bigger tap targets. */
+  .tilt {
+    width: calc(100% + 32px);
+    min-width: 0;
+    margin: 0 -16px;
+  }
+
+  /* Keep the dice and instructions on screen while you look at the board. */
+  .actions-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    border-radius: 18px 18px 0 0;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    background: rgba(18, 14, 18, 0.96);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.55);
+  }
+  .actions-panel .hint {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    line-height: 1.35;
+  }
+  .roll-btn {
+    padding: 13px;
+  }
+  .dice-row {
+    gap: 8px;
+  }
+  .die {
+    flex-direction: row;
+    align-items: center;
+  }
+  .die-btn {
+    flex: 1;
+    flex-direction: row;
+    justify-content: center;
+    padding: 6px 8px;
+    gap: 8px;
+  }
+  .die-face {
+    width: 34px;
+    height: 34px;
+  }
+  .die-label {
+    font-size: 0.82rem;
+  }
+  .die-note {
+    display: none;
+  }
+  .die.dead .die-label::after {
+    content: ' ✕';
+    color: var(--muted);
+  }
+  .pass-btn {
+    padding: 8px 10px;
+  }
+  .die-used {
+    padding: 0 6px;
+  }
+  .wild-choices {
+    margin-top: 8px;
+  }
+  .waiting {
+    padding: 12px;
+  }
+
+  /* Room for the fixed action bar at the bottom of the page. */
+  .sidebar {
+    padding-bottom: 170px;
+  }
+
+  .result-card {
+    padding: 22px 26px;
+  }
 }

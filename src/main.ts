@@ -207,6 +207,7 @@ function leaveOnline(rerender = true) {
   }
 }
 
+const canShare = () => typeof navigator.share === 'function' && matchMedia('(hover: none)').matches;
 const inviteLink = () => `${location.origin}${location.pathname}?join=${online.code}`;
 
 // ---------- UI handlers ----------
@@ -407,7 +408,7 @@ function onlinePanel(): string {
     <p class="net-status ${good ? 'ok' : 'pending'}"><span class="dot"></span>${opponent}${online.detail ? ` <span class="muted">${online.detail}</span>` : ''}</p>
     ${
       online.mode === 'host'
-        ? `<label class="invite">Send this link to your friend<span class="invite-row"><input readonly value="${inviteLink()}" /><button class="ghost-btn" data-act="copy">Copy</button></span></label>`
+        ? `<label class="invite">Send this link to your friend<span class="invite-row"><input readonly value="${inviteLink()}" /><button class="ghost-btn" data-act="copy">${canShare() ? 'Share' : 'Copy'}</button></span></label>`
         : ''
     }
     <button class="ghost-btn wide" data-act="leave">Leave online game</button>
@@ -462,8 +463,8 @@ function render() {
     <header class="top">
       <h1>Hex Balance</h1>
       <div class="turn turn-${state.turn}">${turnText}</div>
-      <button class="ghost-btn" data-act="rotate" title="Turn the board around">Rotate view</button>
-      ${online.mode === 'guest' ? '' : '<button class="ghost-btn" data-act="new">New game</button>'}
+      <button class="ghost-btn" data-act="rotate" title="Turn the board around">Rotate<span class="long"> view</span></button>
+      ${online.mode === 'guest' ? '' : '<button class="ghost-btn" data-act="new">New<span class="long"> game</span></button>'}
     </header>
     ${balanceBar()}
     <main class="layout">
@@ -509,6 +510,10 @@ app.addEventListener('click', (event) => {
   if (act === 'host') return startHost();
   if (act === 'leave') return leaveOnline();
   if (act === 'copy') {
+    if (canShare()) {
+      navigator.share({ title: 'Hex Balance', text: 'Join my Hex Balance game', url: inviteLink() }).catch(() => undefined);
+      return;
+    }
     navigator.clipboard?.writeText(inviteLink()).catch(() => undefined);
     el.textContent = 'Copied';
     return;
