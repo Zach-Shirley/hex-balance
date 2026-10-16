@@ -15,13 +15,14 @@ const MAX_LAYERS = 16; // taller stacks are capped visually; the number shows th
 const CAMERA_ELEVATION = (50 * Math.PI) / 180; // 90° would be straight down
 const FOCAL = 2000; // mild perspective
 
-type V2 = [number, number];
-type V3 = [number, number, number];
+export type V2 = [number, number];
+export type V3 = [number, number, number];
+export { R, PIECE_H, MAX_LAYERS, PLATE_T, CAMERA_ELEVATION };
 
 const midCol = 4;
-const boardXY = (id: number): V2 => [(CELLS[id].col - midCol) * 1.5 * R, (CELLS[id].h - CENTER_H) * HALF_H];
+export const boardXY = (id: number): V2 => [(CELLS[id].col - midCol) * 1.5 * R, (CELLS[id].h - CENTER_H) * HALF_H];
 
-function hex2(cx: number, cy: number, r: number): V2[] {
+export function hex2(cx: number, cy: number, r: number): V2[] {
   return Array.from({ length: 6 }, (_, i) => {
     const a = (Math.PI / 3) * i;
     return [cx + r * Math.cos(a), cy + r * Math.sin(a)] as V2;
@@ -58,14 +59,15 @@ const PLATE: V2[] = (() => {
   return [[-a, -H], [a, -H], [W, 0], [a, H], [-a, H], [-W, 0]] as V2[];
 })();
 const PLATE_HALF_W = Math.max(...PLATE.map((p) => p[0]));
+export const PLATE_POINTS = PLATE;
 
-interface Camera {
+export interface Camera {
   lean: number; // radians; positive sinks the Blue (bottom, +y) edge
   yaw: number; // radians about the vertical axis
 }
 
 /** Board point → world (applies the lean about the pipe) → screen. */
-function project([x, y, z]: V3, cam: Camera, leans = true): { p: V2; depth: number } {
+export function project([x, y, z]: V3, cam: Camera, leans = true): { p: V2; depth: number } {
   let wy = y;
   let wz = z;
   if (leans) {
@@ -89,7 +91,7 @@ function project([x, y, z]: V3, cam: Camera, leans = true): { p: V2; depth: numb
 
 const fmt = (pts: V2[]) => pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
 
-export type Theme = 'neon' | 'forge';
+export type Theme = 'neon' | 'forge' | 'foundry';
 type RGB = [number, number, number];
 
 interface Palette {
@@ -116,6 +118,14 @@ const PALETTES: Record<Theme, Palette> = {
     pieceSide: [172, 160, 142],
     plateStops: ['#4d4842', '#35312c', '#221f1b'],
     steelStops: ['#ece3d2', '#b6a991', '#7c6e5a'],
+  },
+  // Heat-blued tool steel lit from below by the crucible.
+  foundry: {
+    metal: [70, 60, 56],
+    plateSide: [58, 44, 38],
+    pieceSide: [150, 140, 132],
+    plateStops: ['#3b3230', '#241c1a', '#140f0e'],
+    steelStops: ['#e9e2da', '#a59c94', '#5c524c'],
   },
 };
 
@@ -224,6 +234,10 @@ export interface BoardView {
   theme: Theme;
   /** Cells punched through the plate. */
   holes: Set<number>;
+  /** Stacks not drawn (an animation is carrying them). */
+  hidden?: Set<number>;
+  /** Freshly worked stacks still glowing, with ms since they were heated. */
+  hot?: Map<number, number>;
   /** Spawn slot heat: level 1-2, or overheated with turns left. */
   heat: Map<number, { heat: number; cooldown: number }>;
   sources: Set<number>;
@@ -266,11 +280,14 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const pipeTop = -PLATE_T;
   const pipeBot = -PLATE_T - 2 * pipeA;
   const ground = pipeBot - 70;
-  const pipeX = PLATE_HALF_W + 30;
-  const shadow = [-1, 1].flatMap((sx) => [-1, 1].map((sy) => P([sx * (PLATE_HALF_W + 10), sy * 230, ground], false).p));
-  out.push(`<polygon class="ground-shadow" points="${fmt([shadow[0], shadow[1], shadow[3], shadow[2]])}" />`);
+  const foundry = view.theme === 'foundry';
+  const pipeX = PLATE_HALF_W + (foundry ? 320 : 30);
+  if (!foundry) {
+    const shadow = [-1, 1].flatMap((sx) => [-1, 1].map((sy) => P([sx * (PLATE_HALF_W + 10), sy * 230, ground], false).p));
+    out.push(`<polygon class="ground-shadow" points="${fmt([shadow[0], shadow[1], shadow[3], shadow[2]])}" />`);
+  }
 
-  const forge = view.theme === 'forge';
+  const forge = view.theme === 'forge' || foundry;
   /** Grime layers over a metal face: grain, rust and (on vertical faces) soot pooling low. */
   const grit = (pts: V2[], suffix: string, vertical: boolean, rustiness = 1) =>
     forge
@@ -315,7 +332,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const [bx, by] = P([x, y, z], false).p;
     return forge ? `<circle class="bolt" cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="2.6" />` : '';
   };
-  for (const sx of [-1, 1]) {
+  for (const sx of foundry ? [] : [-1, 1]) {
     const cx = sx * pipeX;
     out.push(box(cx - 22, cx + 22, -pipeA - 8, pipeA + 8, ground, ground + 6, 'stand'));
     out.push(box(cx - 7, cx + 7, -12, 12, ground + 6, pipeBot - 6, 'stand'));
@@ -332,8 +349,9 @@ export function renderBoard(view: BoardView): RenderedBoard {
     });
     out.push(`<polyline class="weld" points="${fmt(seam)}" />`);
   }
+  // In the foundry the axle is held by bearing blocks just outside the plate.
   for (const sx of [-1, 1]) {
-    const cx = sx * pipeX;
+    const cx = sx * (foundry ? PLATE_HALF_W + 46 : pipeX);
     out.push(box(cx - 11, cx + 11, -pipeA - 4, pipeA + 4, pipeBot - 6, pipeTop, 'stand saddle'));
     out.push(bolt(cx - 6, front * (pipeA + 4), pipeBot - 2) + bolt(cx + 6, front * (pipeA + 4), pipeBot - 2));
   }
@@ -364,7 +382,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
   out.push(`<polyline class="rim rim-blue" points="${rimPath([2, 3, 4, 5])}" />`);
 
   // Rivets around the forge plate.
-  if (view.theme === 'forge') {
+  if (forge) {
     const rv = inset(0.955);
     for (let i = 0; i < rv.length; i++) {
       const [ax, ay] = rv[i];
@@ -429,7 +447,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const tops = new Map<number, V2>();
   const order = view.stacks
     .map((stack, id) => ({ stack, id, depth: P([...boardXY(id), 0]).depth }))
-    .filter((s): s is { stack: Stack; id: number; depth: number } => s.stack !== null)
+    .filter((s): s is { stack: Stack; id: number; depth: number } => s.stack !== null && !view.hidden?.has(s.id))
     .sort((a, b) => a.depth - b.depth);
   for (const { stack, id } of order) {
     const [cx, cy] = boardXY(id);
@@ -461,10 +479,21 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const label = P([cx, cy, height]).p;
     tops.set(id, label);
     const target = view.targets.get(id);
-    const classes = ['stack', `owner-${stack.owner}`, view.sources.has(id) ? 'is-source' : '', view.from === id ? 'is-from' : '', target ? `is-target target-${target}` : '']
+    const hotFor = view.hot?.get(id);
+    const classes = ['stack', `owner-${stack.owner}`, view.sources.has(id) ? 'is-source' : '', view.from === id ? 'is-from' : '', target ? `is-target target-${target}` : '', hotFor !== undefined ? 'hot' : '']
       .filter(Boolean)
       .join(' ');
-    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" />${forge ? `<polygon class="grit" points="${top}" fill="url(#grain)" opacity="0.7" />` : ''}<polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
+    // Freshly worked metal glows and cools; the negative delay keeps the fade continuous across redraws.
+    const glow =
+      hotFor !== undefined
+        ? `<g class="hot-glow" style="animation-delay:-${Math.round(hotFor)}ms">${ring
+            .map((a, i) => {
+              const b = ring[(i + 1) % 6];
+              return `<polygon points="${fmt([P([a[0], a[1], 0]).p, P([b[0], b[1], 0]).p, P([b[0], b[1], height]).p, P([a[0], a[1], height]).p])}" />`;
+            })
+            .join('')}<polygon points="${top}" /></g>`
+        : '';
+    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" />${forge ? `<polygon class="grit" points="${top}" fill="url(#grain)" opacity="0.7" />` : ''}${glow}<polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
   }
 
   // Destination outlines drawn above everything, so a tall stack in front never hides

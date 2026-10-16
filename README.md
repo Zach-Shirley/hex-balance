@@ -49,7 +49,9 @@ npm run build   # typecheck + production bundle
 
 ## Themes and experiments
 
-Two themes, chosen per device in the **Style** panel: **Neon** (default; glowing edges, coloured player rims) and **Forge** (riveted, rusted iron).
+Three styles, chosen per device in the **Style** panel: **Neon** (default; glowing edges, coloured player rims), **Forge** (riveted, rusted iron) and **Foundry**.
+
+**Foundry** is a full game presentation rather than a skin: Red Furnace versus Blue Quench in a live foundry hall (`src/bg.ts`: trusses, swinging chains, gears, two pounding drop presses, embers and a molten pool under the plate). Every action has machinery (`src/fx.ts`): a crane claw lowers spawned pieces, a drop hammer drives reinforcements and strikes, stacks are lifted and carried for moves, merges get an arc weld and splits a cutting torch, breakthroughs fall into the pool, and fresh metal glows and cools. Losing is a meltdown: the plate pitches over and the whole line slides into the crucible. The layout becomes a HUD (forge nameplates with danger bars, shift banner, molten gauge, a control console for the dice), with combos and events slammed across the screen; rules, online, settings and the log live in a menu drawer, and there is a short title screen.
 
 Experiments in **Settings and experiments** (off by default, saved with the game so both online players share them):
 

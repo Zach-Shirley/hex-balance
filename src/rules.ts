@@ -125,6 +125,16 @@ export interface Die {
   bonus?: boolean;
 }
 
+export interface LastAction {
+  seq: number;
+  player: Player;
+  action: Action;
+  /** Stack sizes before the action at the cells it touched. */
+  before: { from?: number; to?: number };
+  /** Cells that broke through during this action, with the stack that fell. */
+  broke: { id: number; owner: Player; count: number }[];
+}
+
 export interface Combo {
   name: string;
   text: string;
@@ -156,6 +166,8 @@ export interface GameState {
   heat?: Record<number, SpawnHeat>;
   /** A notable event from the last action, shown to players. */
   event?: string | null;
+  /** The most recent action, for animation (increments `seq` every action). */
+  lastAction?: LastAction | null;
 }
 
 export const other = (player: Player): Player => (player === 'red' ? 'blue' : 'red');
@@ -532,7 +544,17 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
     });
   }
 
-  return settle({ ...state, stacks, dice, heat, holes, event: events.join(' ') || null, log: [...log, ...events] });
+  const lastAction: LastAction = {
+    seq: (state.lastAction?.seq ?? 0) + 1,
+    player: state.turn,
+    action,
+    before: { from: 'from' in action ? state.stacks[action.from]?.count : undefined, to: state.stacks[action.to]?.count },
+    broke: (holes.length > (state.holes ?? []).length ? holes.slice((state.holes ?? []).length) : []).map((id) => {
+      const fell = resolveStacks(state.stacks, state.turn, action)[id]!;
+      return { id, owner: fell.owner, count: fell.count };
+    }),
+  };
+  return settle({ ...state, stacks, dice, heat, holes, lastAction, event: events.join(' ') || null, log: [...log, ...events] });
 }
 
 /** Whether a die has any legal action for the player to move. */

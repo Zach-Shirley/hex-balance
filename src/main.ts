@@ -36,6 +36,8 @@ import {
   type Settings,
 } from './rules';
 import { renderBoard, type Theme } from './view3d';
+import { Fx } from './fx';
+import { FoundryBackdrop } from './bg';
 import { GuestSession, HostSession, newRoomCode, type Intent, type NetStatus } from './net';
 
 // ---------- State ----------
@@ -66,23 +68,31 @@ let theme: Theme = loadTheme();
 
 function loadTheme(): Theme {
   try {
-    return localStorage.getItem('hex-balance-theme') === 'forge' ? 'forge' : 'neon';
+    const saved = localStorage.getItem('hex-balance-theme');
+    return saved === 'forge' || saved === 'foundry' ? saved : 'neon';
   } catch {
     return 'neon';
   }
 }
 
+/** Foundry builds on Forge's board styling, so it sets data-theme="forge" plus a variant. */
+function applyThemeAttributes() {
+  document.documentElement.dataset.theme = theme === 'foundry' ? 'forge' : theme;
+  document.documentElement.dataset.variant = theme === 'foundry' ? 'foundry' : '';
+  backdrop?.setActive(theme === 'foundry');
+}
+
 function setTheme(next: Theme) {
   theme = next;
-  document.documentElement.dataset.theme = next;
+  fx?.clear();
   try {
     localStorage.setItem('hex-balance-theme', next);
   } catch {
     // preference lasts for this visit only
   }
+  applyThemeAttributes();
   render();
 }
-document.documentElement.dataset.theme = theme;
 
 const myColor = (): Player | null => (online.mode === 'host' ? 'red' : online.mode === 'guest' ? 'blue' : null);
 const canAct = () => state.phase !== 'over' && (myColor() === null || state.turn === myColor());
@@ -190,6 +200,7 @@ function resolveIntent(current: GameState, intent: Intent): GameState {
 }
 
 function setState(next: GameState) {
+  transition(state, next);
   state = next;
   selected = null;
   saveHostState();
@@ -297,7 +308,9 @@ function startGuest(code: string) {
   guest = new GuestSession(code, {
     onStatus: setStatus,
     onState: (next) => {
-      state = { ...next, settings: normalizeSettings(next.settings) };
+      const incoming = { ...next, settings: normalizeSettings(next.settings) };
+      transition(state, incoming);
+      state = incoming;
       selected = null;
       render();
     },
@@ -403,6 +416,8 @@ function drawBoard() {
     sources: hints.sources,
     targets: hints.targets,
     from: selected,
+    hidden: theme === 'foundry' ? fx.hidden : undefined,
+    hot: theme === 'foundry' ? fx.hotMap() : undefined,
   });
   host.innerHTML = view.under + view.board;
 }
@@ -676,7 +691,7 @@ function themePanel(): string {
     `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
   return `<div class="panel theme-panel">
     <h3>Style</h3>
-    <div class="theme-row">${opt('neon', 'Neon', 'Glowing edges, arcade night')}${opt('forge', 'Forge', 'Riveted iron, 1880s mill')}</div>
+    <div class="theme-row">${opt('neon', 'Neon', 'Glowing edges, arcade night')}${opt('forge', 'Forge', 'Riveted iron, 1880s mill')}${opt('foundry', 'Foundry', 'Molten duel, live machines')}</div>
   </div>`;
 }
 
@@ -746,6 +761,7 @@ function resultCard(): string {
 }
 
 function render() {
+  if (theme === 'foundry') return renderFoundry();
   const far: Player = flipped() ? 'blue' : 'red';
   const near = other(far);
   const turnText = state.phase === 'over' ? 'Game over' : `Turn ${state.turnNumber} · <strong>${myColor() && state.turn === myColor() ? 'You' : playerName(state.turn)}</strong>`;
@@ -803,7 +819,23 @@ app.addEventListener('click', (event) => {
   }
   if (act === 'rotate') return rotateView();
   const pick = el.closest<HTMLElement>('[data-theme-pick]')?.dataset.themePick;
-  if (pick === 'neon' || pick === 'forge') return setTheme(pick);
+  if (pick === 'neon' || pick === 'forge' || pick === 'foundry') return setTheme(pick);
+  if (act === 'menu') {
+    menuOpen = !menuOpen;
+    return render();
+  }
+  if (act === 'title-local') {
+    showTitle = false;
+    return render();
+  }
+  if (act === 'title-online') {
+    showTitle = false;
+    return startHost();
+  }
+  if (act === 'title-classic') {
+    showTitle = false;
+    return setTheme('neon');
+  }
   if (act === 'host') return startHost();
   if (act === 'leave') {
     if (gameInProgress() && !confirm('Leave the online game? The current game will end.')) return;
@@ -894,6 +926,178 @@ window.addEventListener('keydown', (event) => {
     render();
   }
 });
+
+// ---------- Foundry ----------
+
+/** Live backdrop and machine effects, created once and only active in the Foundry theme. */
+const bgCanvas = document.createElement('canvas');
+bgCanvas.className = 'fd-bg';
+const fxCanvas = document.createElement('canvas');
+fxCanvas.className = 'fd-fx';
+const slamLayer = document.createElement('div');
+slamLayer.className = 'fd-slam';
+document.body.prepend(bgCanvas);
+document.body.append(fxCanvas, slamLayer);
+const backdrop = new FoundryBackdrop(bgCanvas);
+const fx = new Fx(fxCanvas, {
+  svg: () => app.querySelector<SVGSVGElement>('svg.board'),
+  cam: () => ({ lean: shownLean + shakeLean, yaw: viewYaw }),
+  redraw: () => drawBoard(),
+  shake: (px) => impact(px),
+});
+let menuOpen = false;
+let showTitle = theme === 'foundry';
+
+/** Shake the stage for an impact; CSS variables survive re-renders. */
+function impact(px: number) {
+  const root = document.documentElement.style;
+  let n = 0;
+  const step = () => {
+    const k = px * (1 - n / 6);
+    root.setProperty('--sx', `${((Math.random() - 0.5) * 2 * k).toFixed(1)}px`);
+    root.setProperty('--sy', `${((Math.random() - 0.5) * 2 * k).toFixed(1)}px`);
+    if (++n <= 6) setTimeout(step, 30);
+    else {
+      root.setProperty('--sx', '0px');
+      root.setProperty('--sy', '0px');
+    }
+  };
+  step();
+}
+
+/** A big stamped title across the screen (combos, breakthroughs, overheats). */
+function slam(title: string, sub: string, tone: string) {
+  if (theme !== 'foundry') return;
+  const el = document.createElement('div');
+  el.className = `slam slam-${tone}`;
+  el.innerHTML = `<strong>${title}</strong>${sub ? `<span>${sub}</span>` : ''}`;
+  slamLayer.append(el);
+  setTimeout(() => el.remove(), 1900);
+}
+
+/** Called with the old and new state on every change, local or from the network. */
+function transition(prev: GameState, next: GameState) {
+  if (theme !== 'foundry') return;
+  if (next.log.length < prev.log.length || (next.log.length === 1 && prev.log.length > 1)) {
+    fx.clear(); // new game
+    return;
+  }
+  fx.play(prev, next);
+  if (next.combo && next.combo !== prev.combo && next.combo.name !== prev.combo?.name) slam(next.combo.name, next.combo.text, next.combo.tone);
+  if (next.event && next.event !== prev.event) {
+    const broke = /broke through/.test(next.event);
+    slam(broke ? 'Breakthrough!' : 'Overheated!', next.event, 'bad');
+    if (broke) backdrop.flare();
+  }
+  if (next.phase === 'over' && prev.phase !== 'over') {
+    setTimeout(() => backdrop.flare(3200), 900);
+    setTimeout(() => slam('Meltdown', '', 'bad'), 1100);
+  }
+}
+
+const FORGE_NAME: Record<Player, string> = { red: 'Red Furnace', blue: 'Blue Quench' };
+
+function forgePlate(p: Player): string {
+  const b = balance(state);
+  const sinking = b.ratio > 0 ? 'blue' : b.ratio < 0 ? 'red' : null;
+  const danger = sinking === p ? Math.min(100, Math.round(Math.abs(b.ratio) * 100)) : 0;
+  const pieces = state.stacks.reduce((n, s) => n + (s?.owner === p ? s.count : 0), 0);
+  const active = state.phase !== 'over' && state.turn === p;
+  const you = myColor() === p ? ' · you' : '';
+  return `<div class="fd-plate fd-${p} ${active ? 'active' : ''}">
+    <span class="fd-name">${FORGE_NAME[p]}</span>
+    <span class="fd-meta">${pieces} pieces on the plate${you}</span>
+    <span class="fd-danger" title="How close the plate is to tipping toward this side"><i style="width:${danger}%"></i></span>
+  </div>`;
+}
+
+function foundryResult(): string {
+  if (state.phase !== 'over') return '';
+  const winner = other(state.loser!);
+  const me = myColor();
+  const title = me ? (winner === me ? 'Victory' : 'Defeat') : `${FORGE_NAME[winner]} wins`;
+  return `<div class="fd-result"><div class="fd-result-card">
+    <div class="fd-kicker">Meltdown</div>
+    <h2 class="c-${winner}">${title}</h2>
+    <p>${FORGE_NAME[state.loser!]}'s whole line poured into the crucible.</p>
+    ${online.mode === 'guest' ? '<p class="fd-wait">Waiting for the host to fire up a new duel.</p>' : '<button class="fd-btn fd-btn-hot" data-act="new">Fire up a new duel</button>'}
+  </div></div>`;
+}
+
+function titleScreen(): string {
+  return `<div class="fd-title">
+    <div class="fd-title-inner">
+      <div class="fd-title-kicker">Foundry duel</div>
+      <h1>Hex Balance</h1>
+      <p>Load the plate. Tip it toward your rival. Whoever's side goes into the crucible loses everything.</p>
+      <div class="fd-title-buttons">
+        <button class="fd-btn fd-btn-hot" data-act="title-local">Local duel</button>
+        <button class="fd-btn" data-act="title-online">Online duel</button>
+        <button class="fd-btn fd-btn-ghost" data-act="title-classic">Classic style</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderFoundry() {
+  const far: Player = flipped() ? 'blue' : 'red';
+  const near = other(far);
+  const b = balance(state);
+  const status = state.loser
+    ? `Plate tipped toward ${FORGE_NAME[state.loser]}`
+    : Math.abs(b.ratio) < 0.02
+      ? 'Plate level'
+      : `${FORGE_NAME[b.ratio > 0 ? 'blue' : 'red']} side at ${Math.round(Math.abs(b.ratio) * 100)}% of tipping`;
+  const who = state.phase === 'over' ? 'Duel over' : myColor() && state.turn === myColor() ? 'Your shift' : `${FORGE_NAME[state.turn]}'s shift`;
+
+  app.innerHTML = `
+    <div class="fd">
+      <header class="fd-hud">
+        ${forgePlate('red')}
+        <div class="fd-mid">
+          <div class="fd-shift">Shift ${state.turnNumber}</div>
+          <div class="fd-who c-${state.turn}">${who}</div>
+          <div class="fd-status">${status}</div>
+        </div>
+        ${forgePlate('blue')}
+      </header>
+      <div class="fd-tools">
+        <button class="fd-icon" data-act="rotate" title="Rotate the plate">⟲</button>
+        <button class="fd-icon" data-act="menu" title="Menu">☰</button>
+      </div>
+      <main class="fd-stage">
+        <div class="stage-row">
+          <div class="tilt"><div class="board-host"></div></div>
+          ${meter(far, near)}
+        </div>
+      </main>
+      <footer class="fd-console actions-panel turn-${state.turn}">
+        ${dicePanel()}
+        <p class="hint">${hint()}</p>
+      </footer>
+      ${foundryResult()}
+      <aside class="fd-drawer ${menuOpen ? 'open' : ''}">
+        <div class="fd-drawer-head"><h2>Foundry office</h2><button class="fd-icon" data-act="menu" title="Close">✕</button></div>
+        ${online.mode === 'guest' ? '' : '<button class="fd-btn fd-btn-hot wide" data-act="new">New duel</button>'}
+        ${themePanel()}
+        ${onlinePanel()}
+        ${settingsPanel()}
+        ${rulesPanel()}
+        <div class="panel log"><h3>Shift log</h3><ol>${state.log
+          .slice(-30)
+          .reverse()
+          .map((l) => `<li>${l}</li>`)
+          .join('')}</ol></div>
+      </aside>
+      ${showTitle && online.mode === 'local' ? titleScreen() : ''}
+    </div>`;
+  drawBoard();
+  animateLean();
+  updateShake();
+  scheduleAutoPass();
+}
+
+applyThemeAttributes();
 
 // ---------- Boot ----------
 

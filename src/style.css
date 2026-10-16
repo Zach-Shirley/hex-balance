@@ -1520,3 +1520,674 @@ summary,
 .heat-badge {
   pointer-events: none;
 }
+
+/* ======================================================================
+   Foundry: molten duel theme with its own game layout.
+   Set as data-theme="forge" data-variant="foundry" so the Forge board
+   styling (rivets, grit, bolts) carries over; everything below layers on top.
+   ====================================================================== */
+
+.fd-bg,
+.fd-fx {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+}
+.fd-bg {
+  z-index: 0;
+  display: none;
+}
+.fd-fx {
+  z-index: 30;
+}
+.fd-slam {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+}
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+:root[data-variant="foundry"] {
+  --red: #ff5a2e;
+  --red-glow: rgba(255, 90, 46, 0.6);
+  --blue: #3fb3ff;
+  --blue-glow: rgba(63, 179, 255, 0.6);
+  --accent: #ff8a2a;
+  --text: #f3e6d6;
+  --muted: #b59c86;
+  --font: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-display: "Bebas Neue", Impact, sans-serif;
+  --steel-edge: #6b5546;
+  --molten: linear-gradient(180deg, #fff1b8 0%, #ffb347 35%, #ff5a1f 70%, #b3260b 100%);
+}
+:root[data-variant="foundry"],
+:root[data-variant="foundry"] body {
+  background: #070405;
+  overflow: hidden;
+}
+:root[data-variant="foundry"] #app {
+  max-width: none;
+  padding: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.fd {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 1.02rem;
+}
+
+/* ---------- HUD ---------- */
+
+.fd-hud {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: start;
+  gap: 18px;
+  padding: 14px 112px 0 18px;
+}
+.fd-plate {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 340px;
+  padding: 10px 18px 12px;
+  background: linear-gradient(180deg, rgba(48, 34, 28, 0.94), rgba(18, 12, 10, 0.94));
+  border-top: 3px solid var(--edge);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+  transition: box-shadow 0.3s, filter 0.3s;
+  filter: saturate(0.6) brightness(0.8);
+}
+.fd-plate.fd-red {
+  --edge: var(--red);
+}
+.fd-plate.fd-blue {
+  --edge: var(--blue);
+  justify-self: end;
+  text-align: right;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 18px 100%);
+}
+.fd-plate.active {
+  filter: none;
+  box-shadow: inset 0 3px 18px color-mix(in srgb, var(--edge) 35%, transparent);
+}
+.fd-plate.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-top: 3px solid var(--edge);
+  box-shadow: 0 -6px 26px var(--edge);
+  animation: fd-pulse 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes fd-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+.fd-name {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: var(--edge);
+  text-shadow: 0 0 14px color-mix(in srgb, var(--edge) 55%, transparent);
+}
+.fd-meta {
+  font-size: 0.85rem;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fd-danger {
+  display: block;
+  height: 6px;
+  margin-top: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.fd-danger i {
+  display: block;
+  height: 100%;
+  background: var(--molten);
+  box-shadow: 0 0 10px #ff6a1f;
+  transition: width 0.5s;
+}
+.fd-blue .fd-danger i {
+  margin-left: auto;
+}
+.fd-mid {
+  text-align: center;
+  padding-top: 4px;
+}
+.fd-shift {
+  font-size: 0.8rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.fd-who {
+  font-family: var(--font-display);
+  font-size: 2.6rem;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-shadow: 0 0 18px currentColor;
+}
+.fd-status {
+  font-size: 0.9rem;
+  color: #e7cdb3;
+  letter-spacing: 0.04em;
+}
+
+.fd-tools {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 45;
+  display: flex;
+  gap: 8px;
+}
+.fd-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--steel-edge);
+  background: radial-gradient(circle at 35% 30%, #4a3c34, #17100d);
+  color: #f0d6b8;
+  font-size: 1.3rem;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6);
+}
+.fd-icon:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 16px rgba(255, 138, 42, 0.5);
+}
+
+/* ---------- Stage ---------- */
+
+.fd-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 205px;
+  transform: translate(var(--sx, 0px), var(--sy, 0px));
+}
+:root[data-variant="foundry"] .fd .stage-row {
+  width: auto;
+}
+:root[data-variant="foundry"] .fd .tilt {
+  width: min(66vw, calc((100vh - 330px) * 1.45));
+}
+
+/* Gauge: a glass tube of molten metal. */
+:root[data-variant="foundry"] .fd .meter-track {
+  width: 18px;
+  border: 2px solid var(--steel-edge);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--red) 0%, rgba(30, 14, 10, 0.9) 45%, rgba(30, 14, 10, 0.9) 55%, var(--blue) 100%) !important;
+  box-shadow:
+    inset 0 0 8px rgba(0, 0, 0, 0.9),
+    0 0 18px rgba(255, 110, 30, 0.25);
+}
+:root[data-variant="foundry"] .fd .meter-marker {
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #fff6d0, #ffb347 45%, #ff5a1f);
+  border: 2px solid #3a1a0c;
+  box-shadow: 0 0 16px #ff7a1a;
+}
+:root[data-variant="foundry"] .fd .meter-label {
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+}
+
+/* ---------- Console ---------- */
+
+.fd-console {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  z-index: 20;
+  width: min(780px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  padding: 12px 16px 10px;
+  border: 2px solid #5a4030;
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.015) 0 2px, transparent 2px 6px),
+    linear-gradient(180deg, #2c211c, #120c0a);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 170, 90, 0.18),
+    0 12px 40px rgba(0, 0, 0, 0.75),
+    0 0 40px rgba(255, 90, 20, 0.14);
+}
+.fd-console::before,
+.fd-console::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #9a8676, #2a201b);
+}
+.fd-console::before {
+  left: 8px;
+}
+.fd-console::after {
+  right: 8px;
+}
+:root[data-variant="foundry"] .fd .roll-btn {
+  font-family: var(--font-display);
+  font-size: 1.9rem;
+  letter-spacing: 0.14em;
+  padding: 10px;
+  border-radius: 6px;
+  border: 2px solid #ffb36b;
+  color: #2a0d03;
+  background: var(--molten);
+  box-shadow:
+    0 0 26px rgba(255, 110, 30, 0.6),
+    inset 0 -4px 0 rgba(0, 0, 0, 0.25);
+  text-shadow: 0 1px 0 rgba(255, 240, 200, 0.6);
+}
+:root[data-variant="foundry"] .fd .roll-btn.turn-blue {
+  border-color: #9fdcff;
+  color: #04131f;
+  background: linear-gradient(180deg, #e8f7ff 0%, #8fd3ff 35%, #3fb3ff 70%, #12588f 100%);
+  box-shadow:
+    0 0 26px rgba(63, 179, 255, 0.55),
+    inset 0 -4px 0 rgba(0, 0, 0, 0.25);
+}
+:root[data-variant="foundry"] .fd .roll-btn kbd {
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+}
+:root[data-variant="foundry"] .fd .die {
+  border-radius: 8px;
+  border: 2px solid var(--steel-edge);
+  background: radial-gradient(circle at 30% 25%, #4a3d36, #1c1512);
+  box-shadow: inset 0 1px 0 rgba(255, 200, 150, 0.15);
+}
+:root[data-variant="foundry"] .fd .die-face rect {
+  fill: #dcd0c3;
+  stroke: #3a2f29;
+  stroke-width: 4;
+}
+:root[data-variant="foundry"] .fd .die-label {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  letter-spacing: 0.06em;
+}
+:root[data-variant="foundry"] .fd .hint {
+  margin-top: 8px;
+  font-size: 0.95rem;
+  color: #dcc5ad;
+}
+:root[data-variant="foundry"] .fd .waiting {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  letter-spacing: 0.08em;
+  border-radius: 6px;
+}
+:root[data-variant="foundry"] .fd .ghost-btn,
+:root[data-variant="foundry"] .fd .mode-btn,
+:root[data-variant="foundry"] .fd .pop-btn,
+:root[data-variant="foundry"] .fd .choice-btn,
+.fd-btn {
+  font-family: var(--font);
+  border-radius: 6px;
+}
+:root[data-variant="foundry"] .fd .combo {
+  border-radius: 6px;
+  font-size: 0.92rem;
+}
+
+/* ---------- Buttons ---------- */
+
+.fd-btn {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  letter-spacing: 0.1em;
+  padding: 10px 24px;
+  border: 2px solid #8a6a4a;
+  background: linear-gradient(180deg, #3a2a22, #1a1210);
+  color: #f0dcc4;
+  box-shadow: inset 0 1px 0 rgba(255, 200, 150, 0.15), 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.fd-btn:hover {
+  border-color: var(--accent);
+}
+.fd-btn-hot {
+  color: #2a0d03;
+  border-color: #ffb36b;
+  background: var(--molten);
+  box-shadow: 0 0 24px rgba(255, 110, 30, 0.5);
+}
+.fd-btn-ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.fd-btn.wide {
+  width: 100%;
+  margin-bottom: 14px;
+}
+
+/* ---------- Drawer ---------- */
+
+.fd-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  width: min(420px, 92vw);
+  padding: 16px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #1b1310, #0d0807);
+  border-left: 2px solid #4a3426;
+  box-shadow: -20px 0 50px rgba(0, 0, 0, 0.7);
+  transform: translateX(105%);
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.fd-drawer.open {
+  transform: none;
+}
+.fd-drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.fd-drawer-head h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 2rem;
+  letter-spacing: 0.08em;
+  color: #ffb36b;
+}
+.fd-drawer .panel {
+  margin-bottom: 12px;
+}
+
+/* ---------- Result ---------- */
+
+.fd-result {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, rgba(40, 8, 2, 0.55), rgba(0, 0, 0, 0.75));
+  animation: fd-fade 0.8s 2.1s both;
+}
+.fd-result-card {
+  text-align: center;
+  padding: 26px 46px 30px;
+  border: 2px solid #8a4a22;
+  background: linear-gradient(180deg, rgba(40, 22, 16, 0.96), rgba(14, 8, 6, 0.96));
+  box-shadow: 0 0 60px rgba(255, 90, 20, 0.35);
+}
+.fd-kicker {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  letter-spacing: 0.5em;
+  color: #ff8a2a;
+}
+.fd-result-card h2 {
+  margin: 2px 0 6px;
+  font-family: var(--font-display);
+  font-size: clamp(3rem, 8vw, 5.5rem);
+  letter-spacing: 0.06em;
+  line-height: 1;
+  text-shadow: 0 0 30px currentColor;
+}
+.fd-result-card p {
+  margin: 0 0 18px;
+  color: #dcc5ad;
+}
+.fd-wait {
+  color: var(--muted) !important;
+}
+@keyframes fd-fade {
+  from {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+
+/* ---------- Title screen ---------- */
+
+.fd-title {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at 50% 70%, rgba(80, 20, 4, 0.55), rgba(5, 3, 3, 0.86));
+  backdrop-filter: blur(2px);
+}
+.fd-title-inner {
+  text-align: center;
+  max-width: 720px;
+  padding: 24px;
+}
+.fd-title-kicker {
+  font-family: var(--font-display);
+  letter-spacing: 0.6em;
+  color: #ff8a2a;
+  font-size: 1.2rem;
+}
+.fd-title h1 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(4rem, 14vw, 9rem);
+  letter-spacing: 0.04em;
+  line-height: 0.9;
+  background: var(--molten);
+  background-size: 100% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 24px rgba(255, 110, 30, 0.55));
+  animation: fd-molten 3s ease-in-out infinite alternate;
+}
+@keyframes fd-molten {
+  to {
+    background-position: 0 100%;
+  }
+}
+.fd-title p {
+  color: #e2c8ae;
+  font-size: 1.15rem;
+  margin: 10px auto 26px;
+  max-width: 520px;
+}
+.fd-title-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+/* ---------- Slams ---------- */
+
+.slam {
+  grid-area: 1 / 1;
+  text-align: center;
+  animation: fd-slam 1.9s cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+}
+.slam strong {
+  display: block;
+  font-family: "Bebas Neue", Impact, sans-serif;
+  font-size: clamp(56px, 10vw, 132px);
+  letter-spacing: 0.06em;
+  line-height: 0.95;
+  background: var(--molten);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 4px 0 #2a0b02) drop-shadow(0 0 22px rgba(255, 110, 30, 0.7));
+}
+.slam span {
+  display: block;
+  margin-top: 4px;
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: #ffe2bf;
+  text-shadow: 0 2px 8px #000;
+}
+.slam-bad strong {
+  background: linear-gradient(180deg, #ffd0b8, #ff4a2a 55%, #8a1205);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+.slam-mixed strong {
+  background: linear-gradient(180deg, #f2e2ff, #c48bff 55%, #5a2a8a);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+@keyframes fd-slam {
+  0% {
+    opacity: 0;
+    transform: scale(2.6) rotate(-4deg);
+  }
+  10% {
+    opacity: 1;
+    transform: scale(0.94) rotate(0);
+  }
+  16% {
+    transform: scale(1);
+  }
+  78% {
+    opacity: 1;
+    transform: scale(1.03);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.08) translateY(-30px);
+  }
+}
+
+/* ---------- Board in the foundry ---------- */
+
+[data-variant="foundry"] .rim {
+  stroke-width: 6;
+}
+[data-variant="foundry"] .rim-red {
+  stroke: #ff6a1f;
+  filter: drop-shadow(0 0 5px #ff6a1f) drop-shadow(0 0 14px rgba(255, 90, 20, 0.7));
+}
+[data-variant="foundry"] .rim-blue {
+  stroke: #3fb3ff;
+  filter: drop-shadow(0 0 5px #3fb3ff) drop-shadow(0 0 14px rgba(63, 179, 255, 0.6));
+}
+[data-variant="foundry"] .slot-hex {
+  fill: #120a08;
+  stroke: #5e3c2a;
+}
+[data-variant="foundry"] .slots {
+  filter: drop-shadow(0 0 2px rgba(255, 110, 30, 0.35));
+}
+[data-variant="foundry"] .plate-side {
+  stroke: rgba(255, 110, 30, 0.35);
+}
+[data-variant="foundry"] .owner-red .piece-top {
+  stroke: #ff5a2e;
+  filter: drop-shadow(0 0 5px rgba(255, 90, 46, 0.8));
+}
+[data-variant="foundry"] .owner-blue .piece-top {
+  stroke: #3fb3ff;
+  filter: drop-shadow(0 0 5px rgba(63, 179, 255, 0.8));
+}
+.hot-glow {
+  pointer-events: none;
+  animation: fd-cool 2.6s linear forwards;
+}
+.hot-glow polygon {
+  fill: #ff7a1a;
+  mix-blend-mode: screen;
+}
+@keyframes fd-cool {
+  0% {
+    opacity: 0.95;
+  }
+  35% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ---------- Foundry on phones ---------- */
+
+@media (max-width: 760px) {
+  .fd-hud {
+    grid-template-columns: 1fr 1fr;
+    padding: 8px 8px 0;
+    gap: 6px;
+  }
+  .fd-mid {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .fd-plate {
+    padding: 6px 10px 8px;
+  }
+  .fd-name {
+    font-size: 1.25rem;
+  }
+  .fd-meta {
+    font-size: 0.7rem;
+  }
+  .fd-who {
+    font-size: 1.7rem;
+  }
+  .fd-tools {
+    top: 78px;
+    right: 8px;
+  }
+  .fd-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 1.05rem;
+  }
+  .fd-stage {
+    padding-bottom: 200px;
+  }
+  .fd .tilt {
+    width: calc(100vw - 50px);
+  }
+  .fd-console {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    transform: none;
+    border-radius: 14px 14px 0 0;
+  }
+  .fd .roll-btn {
+    font-size: 1.5rem;
+  }
+}
+.swatch-foundry {
+  background: linear-gradient(160deg, #fff1b8, #ff8a2a 35%, #b3260b 65%, #1a0c08);
+}
