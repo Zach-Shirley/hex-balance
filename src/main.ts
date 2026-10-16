@@ -36,8 +36,7 @@ import {
   type Settings,
 } from './rules';
 import { renderBoard, type Theme } from './view3d';
-import { Fx } from './fx';
-import { FoundryBackdrop } from './bg';
+import type { Foundry3D } from './scene3d';
 import { GuestSession, HostSession, newRoomCode, type Intent, type NetStatus } from './net';
 
 // ---------- State ----------
@@ -79,12 +78,12 @@ function loadTheme(): Theme {
 function applyThemeAttributes() {
   document.documentElement.dataset.theme = theme === 'foundry' ? 'forge' : theme;
   document.documentElement.dataset.variant = theme === 'foundry' ? 'foundry' : '';
-  backdrop?.setActive(theme === 'foundry');
+  scene3d?.setActive(theme === 'foundry');
 }
 
 function setTheme(next: Theme) {
   theme = next;
-  fx?.clear();
+  scene3d?.clear();
   try {
     localStorage.setItem('hex-balance-theme', next);
   } catch {
@@ -402,6 +401,32 @@ function targetLean(): number {
 }
 
 function drawBoard() {
+  try {
+    drawBoardUnsafe();
+  } catch (err) {
+    // Never leave the player with a blank, unclickable board: log it and redraw plainly.
+    console.error('Board render failed; redrawing plainly', err);
+    selected = null;
+    drawBoardUnsafe();
+  }
+}
+
+function drawBoardUnsafe() {
+  if (theme === 'foundry') {
+    const hints = boardHints();
+    if (!scene3d) return void loadScene();
+    scene3d.update({
+      stacks: state.stacks,
+      holes: new Set(state.holes ?? []),
+      heat: state.settings.overheat ? new Map(Object.entries(state.heat ?? {}).map(([k, v]) => [Number(k), v])) : new Map(),
+      lean: shownLean + shakeLean,
+      yaw: viewYaw,
+      sources: hints.sources,
+      targets: hints.targets,
+      from: selected,
+    });
+    return;
+  }
   const host = app.querySelector<HTMLElement>('.board-host');
   if (!host) return;
   const hints = boardHints();
@@ -416,8 +441,6 @@ function drawBoard() {
     sources: hints.sources,
     targets: hints.targets,
     from: selected,
-    hidden: theme === 'foundry' ? fx.hidden : undefined,
-    hot: theme === 'foundry' ? fx.hotMap() : undefined,
   });
   host.innerHTML = view.under + view.board;
 }
@@ -899,12 +922,11 @@ app.addEventListener('pointerup', (event) => {
   }
 });
 
-// Hovering a destination previews where the balance marker would land.
-app.addEventListener('mouseover', (event) => {
+/** Show where the balance marker would land if the hovered cell were played. */
+function previewCell(cell: number | null) {
   const ghost = app.querySelector<HTMLElement>('.meter-ghost');
   if (!ghost) return;
-  const cell = (event.target as Element).closest<SVGElement>('[data-id]')?.dataset.id;
-  const ratio = previewRatio(cell === undefined ? null : actionForCell(Number(cell)));
+  const ratio = previewRatio(cell === null ? null : actionForCell(cell));
   if (ratio === null) {
     ghost.classList.remove('show', 'fatal');
     return;
@@ -912,6 +934,11 @@ app.addEventListener('mouseover', (event) => {
   ghost.style.top = `${meterPos(ratio)}%`;
   ghost.classList.add('show');
   ghost.classList.toggle('fatal', Math.abs(ratio) >= 1);
+}
+
+app.addEventListener('mouseover', (event) => {
+  const cell = (event.target as Element).closest<SVGElement>('[data-id]')?.dataset.id;
+  previewCell(cell === undefined ? null : Number(cell));
 });
 
 window.addEventListener('keydown', (event) => {
@@ -929,41 +956,38 @@ window.addEventListener('keydown', (event) => {
 
 // ---------- Foundry ----------
 
-/** Live backdrop and machine effects, created once and only active in the Foundry theme. */
-const bgCanvas = document.createElement('canvas');
-bgCanvas.className = 'fd-bg';
-const fxCanvas = document.createElement('canvas');
-fxCanvas.className = 'fd-fx';
+/** The 3D arena lives outside #app so re-rendering the HUD never rebuilds it. */
+const sceneHost = document.createElement('div');
+sceneHost.className = 'fd3';
 const slamLayer = document.createElement('div');
 slamLayer.className = 'fd-slam';
-document.body.prepend(bgCanvas);
-document.body.append(fxCanvas, slamLayer);
-const backdrop = new FoundryBackdrop(bgCanvas);
-const fx = new Fx(fxCanvas, {
-  svg: () => app.querySelector<SVGSVGElement>('svg.board'),
-  cam: () => ({ lean: shownLean + shakeLean, yaw: viewYaw }),
-  redraw: () => drawBoard(),
-  shake: (px) => impact(px),
-});
+document.body.prepend(sceneHost);
+document.body.append(slamLayer);
+let scene3d: Foundry3D | null = null;
+let sceneLoading = false;
+
+/** Three.js is only downloaded when the Foundry style is in use. */
+function loadScene() {
+  if (sceneLoading) return;
+  sceneLoading = true;
+  import('./scene3d').then(({ Foundry3D }) => {
+    scene3d = new Foundry3D(sceneHost, {
+      onTap: (id) => {
+        if (id !== null) return onCellTap(id);
+        if (selected !== null) {
+          selected = null;
+          render();
+        }
+      },
+      onHover: (id) => previewCell(id),
+    });
+    scene3d.setActive(theme === 'foundry');
+    drawBoard();
+  });
+}
+
 let menuOpen = false;
 let showTitle = theme === 'foundry';
-
-/** Shake the stage for an impact; CSS variables survive re-renders. */
-function impact(px: number) {
-  const root = document.documentElement.style;
-  let n = 0;
-  const step = () => {
-    const k = px * (1 - n / 6);
-    root.setProperty('--sx', `${((Math.random() - 0.5) * 2 * k).toFixed(1)}px`);
-    root.setProperty('--sy', `${((Math.random() - 0.5) * 2 * k).toFixed(1)}px`);
-    if (++n <= 6) setTimeout(step, 30);
-    else {
-      root.setProperty('--sx', '0px');
-      root.setProperty('--sy', '0px');
-    }
-  };
-  step();
-}
 
 /** A big stamped title across the screen (combos, breakthroughs, overheats). */
 function slam(title: string, sub: string, tone: string) {
@@ -979,18 +1003,18 @@ function slam(title: string, sub: string, tone: string) {
 function transition(prev: GameState, next: GameState) {
   if (theme !== 'foundry') return;
   if (next.log.length < prev.log.length || (next.log.length === 1 && prev.log.length > 1)) {
-    fx.clear(); // new game
+    scene3d?.clear(); // new game
     return;
   }
-  fx.play(prev, next);
+  scene3d?.play(prev, next);
   if (next.combo && next.combo !== prev.combo && next.combo.name !== prev.combo?.name) slam(next.combo.name, next.combo.text, next.combo.tone);
   if (next.event && next.event !== prev.event) {
     const broke = /broke through/.test(next.event);
     slam(broke ? 'Breakthrough!' : 'Overheated!', next.event, 'bad');
-    if (broke) backdrop.flare();
+    if (broke) scene3d?.flare();
   }
   if (next.phase === 'over' && prev.phase !== 'over') {
-    setTimeout(() => backdrop.flare(3200), 900);
+    setTimeout(() => scene3d?.flare(3200), 900);
     setTimeout(() => slam('Meltdown', '', 'bad'), 1100);
   }
 }
@@ -1019,7 +1043,7 @@ function foundryResult(): string {
   return `<div class="fd-result"><div class="fd-result-card">
     <div class="fd-kicker">Meltdown</div>
     <h2 class="c-${winner}">${title}</h2>
-    <p>${FORGE_NAME[state.loser!]}'s whole line poured into the crucible.</p>
+    <p>The plate tipped and dumped everything into ${FORGE_NAME[state.loser!]}'s forge pit.</p>
     ${online.mode === 'guest' ? '<p class="fd-wait">Waiting for the host to fire up a new duel.</p>' : '<button class="fd-btn fd-btn-hot" data-act="new">Fire up a new duel</button>'}
   </div></div>`;
 }
@@ -1065,12 +1089,7 @@ function renderFoundry() {
         <button class="fd-icon" data-act="rotate" title="Rotate the plate">⟲</button>
         <button class="fd-icon" data-act="menu" title="Menu">☰</button>
       </div>
-      <main class="fd-stage">
-        <div class="stage-row">
-          <div class="tilt"><div class="board-host"></div></div>
-          ${meter(far, near)}
-        </div>
-      </main>
+      <div class="fd-gauge">${meter(far, near)}</div>
       <footer class="fd-console actions-panel turn-${state.turn}">
         ${dicePanel()}
         <p class="hint">${hint()}</p>

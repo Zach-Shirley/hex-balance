@@ -2191,3 +2191,61 @@ summary,
 .swatch-foundry {
   background: linear-gradient(160deg, #fff1b8, #ff8a2a 35%, #b3260b 65%, #1a0c08);
 }
+
+/* ---------- Foundry 3D arena layout ---------- */
+
+.fd3 {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  display: none;
+}
+.fd3 canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+/* The HUD floats over the arena; only its controls take clicks. */
+:root[data-variant="foundry"] .fd,
+:root[data-variant="foundry"] .fd-hud,
+:root[data-variant="foundry"] .fd-mid {
+  pointer-events: none;
+}
+:root[data-variant="foundry"] .fd-plate,
+:root[data-variant="foundry"] .fd-tools,
+:root[data-variant="foundry"] .fd-console,
+:root[data-variant="foundry"] .fd-gauge,
+:root[data-variant="foundry"] .fd-drawer,
+:root[data-variant="foundry"] .fd-result,
+:root[data-variant="foundry"] .fd-title {
+  pointer-events: auto;
+}
+/* Dice console on the left edge, so it never covers the arena. */
+:root[data-variant="foundry"] .fd-console {
+  left: 14px;
+  top: 120px;
+  bottom: auto;
+  width: 300px;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  transform: none;
+}
+:root[data-variant="foundry"] .fd-console .dice-row {
+  grid-template-columns: 1fr 1fr;
+}
+:root[data-variant="foundry"] .fd-console .roll-btn {
+  font-size: 1.6rem;
+}
+/* Balance gauge on the right edge. */
+.fd-gauge {
+  position: fixed;
+  right: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: min(440px, 60vh);
+  display: flex;
+  z-index: 15;
+}
+.fd-gauge .meter {
+  padding: 0;
+}

@@ -10,11 +10,13 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/three": "^0.170.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.0",
     "vitest": "^4.1.9"
   },
   "dependencies": {
-    "peerjs": "^1.5.5"
+    "peerjs": "^1.5.5",
+    "three": "^0.170.0"
   }
 }

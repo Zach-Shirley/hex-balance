@@ -503,8 +503,10 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const [cx, cy] = boardXY(id);
     const hex = fmt(hex2(cx, cy, R - 3).map(([x, y]) => P([x, y, 0]).p));
     out.push(`<polygon class="target-hit target-${kind}" data-id="${id}" points="${hex}" />`);
-    const [x, y] = view.stacks[id] ? tops.get(id)! : P([cx, cy, 0]).p;
-    const at = `translate(${x.toFixed(1)} ${(view.stacks[id] ? y - 22 : y).toFixed(1)})`;
+    // A stack being carried by an animation is not drawn, so it has no top: fall back to the cell.
+    const top = view.stacks[id] ? tops.get(id) : undefined;
+    const [x, y] = top ?? P([cx, cy, 0]).p;
+    const at = `translate(${x.toFixed(1)} ${(top ? y - 22 : y).toFixed(1)})`;
     if (kind === 'move') {
       out.push(`<ellipse class="mark mark-move" data-id="${id}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="7" ry="${(7 * ry).toFixed(1)}" />`);
     } else if (kind === 'spawn') {
