@@ -101,6 +101,8 @@ export function normalizeSettings(raw: Partial<Settings> | undefined): Settings 
   return out;
 }
 
+export const rollBreakLimit = (random: () => number = Math.random) => BREAK_MIN + Math.floor(random() * (BREAK_MAX - BREAK_MIN + 1));
+
 /** Spawn heat: spawning adds heat; at 3 the slot overheats and locks. */
 export const OVERHEAT_AT = 3;
 /** Own turns a slot stays locked after overheating. */
@@ -160,8 +162,8 @@ export interface GameState {
   comboChoice?: boolean;
   /** Cells that have been punched through (tower-break experiment). */
   holes?: number[];
-  /** Hidden per-cell height limits (tower-break experiment). */
-  breakLimits?: number[];
+  /** The hidden tower height limit this game (tower-break experiment); re-rolled after each breakthrough. */
+  breakLimit?: number;
   /** Heat on spawn slots, keyed by cell id (overheat experiment). */
   heat?: Record<number, SpawnHeat>;
   /** A notable event from the last action, shown to players. */
@@ -194,7 +196,7 @@ export function newGame(settings: Settings = DEFAULT_SETTINGS, random: () => num
     isBonusRoll: false,
     comboChoice: false,
     holes: [],
-    breakLimits: settings.towerBreak ? CELLS.map(() => BREAK_MIN + Math.floor(random() * (BREAK_MAX - BREAK_MIN + 1))) : undefined,
+    breakLimit: settings.towerBreak ? rollBreakLimit(random) : undefined,
     heat: {},
     event: null,
   };
@@ -533,15 +535,24 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
     if (next.cooldown) events.push(`${playerName(state.turn)}'s spawn slot overheated! Locked for ${OVERHEAT_TURNS} turns.`);
   }
 
-  // Tower break: a stack taller than its cell's hidden limit punches through the plate.
+  // Tower break: one hidden height limit for every tower. Only a tower this action made
+  // taller (reinforce, spawning onto it, merging into it) can break; moving never does.
+  // After a breakthrough a new hidden limit is rolled.
   let holes = state.holes ?? [];
-  if (state.settings.towerBreak && state.breakLimits) {
-    stacks = stacks.map((stack, id) => {
-      if (!stack || stack.count <= state.breakLimits![id]) return stack;
-      holes = [...holes, id];
-      events.push(`A ${playerName(stack.owner)} stack of ${stack.count} broke through the plate!`);
-      return null;
-    });
+  let breakLimit = state.breakLimit;
+  if (state.settings.towerBreak) {
+    const limit = breakLimit ?? rollBreakLimit();
+    breakLimit = limit;
+    const grows = action.kind === 'reinforce' || action.kind === 'spawn' || action.kind === 'merge';
+    const grown = action.to;
+    const stack = stacks[grown];
+    if (grows && stack && stack.count > limit) {
+      stacks = stacks.slice();
+      stacks[grown] = null;
+      holes = [...holes, grown];
+      breakLimit = rollBreakLimit();
+      events.push(`A ${playerName(stack.owner)} tower of ${stack.count} broke through the plate! (The limit was ${limit}; a new hidden limit is set.)`);
+    }
   }
 
   const lastAction: LastAction = {
@@ -554,7 +565,7 @@ export function applyAction(state: GameState, dieIndex: number, action: Action):
       return { id, owner: fell.owner, count: fell.count };
     }),
   };
-  return settle({ ...state, stacks, dice, heat, holes, lastAction, event: events.join(' ') || null, log: [...log, ...events] });
+  return settle({ ...state, stacks, dice, heat, holes, breakLimit, lastAction, event: events.join(' ') || null, log: [...log, ...events] });
 }
 
 /** Whether a die has any legal action for the player to move. */

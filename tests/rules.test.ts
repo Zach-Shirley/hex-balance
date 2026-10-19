@@ -244,20 +244,46 @@ describe('experiments', () => {
     expect(isOverheated(state, slot)).toBe(false); // cooled
   });
 
-  it('tower break: a stack over its hidden limit falls through and leaves a hole', () => {
+  it('tower break: a tower made taller than the hidden limit falls through and leaves a hole', () => {
     let state = emptyGame({ towerBreak: true });
-    state = { ...state, breakLimits: CELLS.map(() => 5) };
+    state = { ...state, breakLimit: 5 };
     state = place(state, cellAt(4, 6)!, { owner: 'red', count: 5 });
     state = rolled(state, 5, 2);
     state = applyAction(state, 0, { kind: 'reinforce', to: cellAt(4, 6)! });
     expect(state.stacks[cellAt(4, 6)!]).toBeNull();
     expect(state.holes).toContain(cellAt(4, 6)!);
+    expect(state.breakLimit).toBeGreaterThanOrEqual(5); // a new limit was rolled
     state = place(state, cellAt(4, 4)!, { owner: 'red', count: 1 });
     expect(legalActions(state, 'move').some((a) => a.to === cellAt(4, 6)!)).toBe(false);
   });
 
+  it('tower break uses one limit for every tower, and reaching it exactly is safe', () => {
+    let state = emptyGame({ towerBreak: true, boardMass: 400 });
+    state = { ...state, breakLimit: 7 };
+    state = place(state, cellAt(2, 4)!, { owner: 'red', count: 6 });
+    state = place(state, cellAt(6, 4)!, { owner: 'red', count: 6 });
+    state = rolled(state, 5, 5); // supply drop: three reinforcements
+    state = applyAction(state, 0, { kind: 'reinforce', to: cellAt(2, 4)! }); // 7: at the limit, safe
+    expect(state.stacks[cellAt(2, 4)!]?.count).toBe(7);
+    state = applyAction(state, 1, { kind: 'reinforce', to: cellAt(6, 4)! }); // 7 on another tile: same limit, safe
+    expect(state.stacks[cellAt(6, 4)!]?.count).toBe(7);
+    state = applyAction(state, 2, { kind: 'reinforce', to: cellAt(2, 4)! }); // 8: breaks
+    expect(state.stacks[cellAt(2, 4)!]).toBeNull();
+  });
+
+  it('moving a tall tower never breaks it', () => {
+    let state = emptyGame({ towerBreak: true });
+    state = { ...state, breakLimit: 5 };
+    state = place(state, cellAt(4, 6)!, { owner: 'red', count: 9 }); // already over (e.g. limit re-rolled lower)
+    state = rolled(state, 2, 4);
+    state = applyAction(state, 0, { kind: 'move', from: cellAt(4, 6)!, to: cellAt(4, 8)!, jump: false });
+    expect(state.stacks[cellAt(4, 8)!]?.count).toBe(9);
+  });
+
   it('tower break limits are hidden but always between 5 and 12', () => {
-    const state = game({ towerBreak: true });
-    expect(state.breakLimits!.every((n) => n >= 5 && n <= 12)).toBe(true);
+    for (let i = 0; i < 50; i++) {
+      const n = game({ towerBreak: true }).breakLimit!;
+      expect(n >= 5 && n <= 12).toBe(true);
+    }
   });
 });

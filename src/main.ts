@@ -68,7 +68,8 @@ let theme: Theme = loadTheme();
 function loadTheme(): Theme {
   try {
     const saved = localStorage.getItem('hex-balance-theme');
-    return saved === 'forge' || saved === 'foundry' ? saved : 'neon';
+    // Foundry is archived (code kept, not offered): a saved 'foundry' choice falls back to Neon.
+    return saved === 'forge' ? 'forge' : 'neon';
   } catch {
     return 'neon';
   }
@@ -714,7 +715,7 @@ function themePanel(): string {
     `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
   return `<div class="panel theme-panel">
     <h3>Style</h3>
-    <div class="theme-row">${opt('neon', 'Neon', 'Glowing edges, arcade night')}${opt('forge', 'Forge', 'Riveted iron, 1880s mill')}${opt('foundry', 'Foundry', 'Molten duel, live machines')}</div>
+    <div class="theme-row">${opt('neon', 'Neon', 'Glowing edges, arcade night')}${opt('forge', 'Forge', 'Riveted iron, 1880s mill')}</div>
   </div>`;
 }
 
@@ -737,7 +738,7 @@ function settingsPanel(): string {
     <h4>Experiments</h4>
     ${check('threeDice', s.diceCount === 3, '<strong>Three dice</strong>: roll three dice a turn; three of a kind is a triple combo')}
     ${check('overheat', s.overheat, `<strong>Overheating spawns</strong>: each spawn heats its slot; ${OVERHEAT_AT} heat locks it for your next ${OVERHEAT_TURNS} turns. Slots cool by one each of your turns`)}
-    ${check('towerBreak', s.towerBreak, `<strong>Breaking point</strong>: every cell hides a height limit (${BREAK_MIN}-${BREAK_MAX}). Stack past it and the tower punches through, leaving a permanent hole`)}
+    ${check('towerBreak', s.towerBreak, `<strong>Breaking point</strong>: one hidden tower height limit (${BREAK_MIN}-${BREAK_MAX}) for the whole board. Grow a tower past it and it punches through, leaving a permanent hole; then a new hidden limit is set`)}
     <label>Piece limit per player <span>(0 = no limit)</span><input type="number" name="pieceLimit" min="0" max="99" step="1" value="${s.pieceLimit}" ${off} /></label>
     ${locked ? '' : '<button class="ghost-btn" data-act="apply-settings">Apply and restart</button>'}
   </details>`;
@@ -767,7 +768,7 @@ function rulesPanel(): string {
     <table>${rows}</table>
     ${comboTable()}
     ${state.settings.overheat ? `<p class="muted">Overheating spawns: each spawn adds heat to its slot. At ${OVERHEAT_AT} heat the slot locks for your next ${OVERHEAT_TURNS} turns; otherwise it cools by one at the start of each of your turns.</p>` : ''}
-    ${state.settings.towerBreak ? `<p class="muted">Breaking point: every cell hides a height limit between ${BREAK_MIN} and ${BREAK_MAX}. A stack taller than its cell's limit falls through and leaves a permanent hole nothing can enter.</p>` : ''}
+    ${state.settings.towerBreak ? `<p class="muted">Breaking point: the board hides one tower height limit between ${BREAK_MIN} and ${BREAK_MAX}, the same for every tile. Reinforcing, spawning onto or merging into a tower so it goes past the limit makes it fall through, leaving a permanent hole nothing can enter. Reaching the limit exactly is safe, and moving a tower never breaks it. After each breakthrough a new hidden limit is set.</p>` : ''}
     ${state.settings.pieceLimit > 0 ? `<p class="muted">Piece limit: each player may have at most ${state.settings.pieceLimit} pieces on the board. Spawn and reinforce stop at the cap.</p>` : ''}
     <p class="muted">Each turn roll ${state.settings.diceCount === 3 ? 'three' : 'two'} dice; each die is one action, used in any order. Tap a stack to pick it up and see where it can go, or tap a spawn slot to spawn. Dice with no legal move are skipped automatically. Enemy stacks block movement, and an enemy stack on your spawn slot stops you spawning there. The board can tip after any action, including toward the player who moved.</p>
   </details>`;
@@ -842,7 +843,7 @@ app.addEventListener('click', (event) => {
   }
   if (act === 'rotate') return rotateView();
   const pick = el.closest<HTMLElement>('[data-theme-pick]')?.dataset.themePick;
-  if (pick === 'neon' || pick === 'forge' || pick === 'foundry') return setTheme(pick);
+  if (pick === 'neon' || pick === 'forge') return setTheme(pick);
   if (act === 'menu') {
     menuOpen = !menuOpen;
     return render();

@@ -49,7 +49,9 @@ npm run build   # typecheck + production bundle
 
 ## Themes and experiments
 
-Three styles, chosen per device in the **Style** panel: **Neon** (default; glowing edges, coloured player rims), **Forge** (riveted, rusted iron) and **Foundry**.
+Two styles, chosen per device in the **Style** panel: **Neon** (default; glowing edges, coloured player rims) and **Forge** (riveted, rusted iron).
+
+**Archived (2026-10-19): Foundry.** No longer offered in the Style panel; its code is kept for revival (`src/scene3d.ts`, the Foundry branch in `src/main.ts`, git tag `foundry-archive`).
 
 **Foundry** is a real-time 3D arena (`src/scene3d.ts`, Three.js, loaded only when this style is chosen) seen from behind your side, Clash Royale style: a dark stainless plate with bronze-rimmed wells on a bronze pivot beam and pedestals, grounded on a steel floor, with a molten forge pit at each end (Red runs orange, Blue runs white-blue). Pieces are polished steel with glowing owner-coloured bands; they rise out of their owner's pit when spawned, take a drop hammer for reinforce and strike, are lifted for moves, arc-weld on merge, get torch-cut on split, and glow red-hot then cool. Losing tips the plate and dumps every stack into the loser's pit. The HUD has forge nameplates, the dice console on the left, the balance gauge on the right, stamped combo titles and a menu drawer. The presses beside each pit and the hall are placeholders awaiting approval before detailed modelling.
 
@@ -57,7 +59,7 @@ Experiments in **Settings and experiments** (off by default, saved with the game
 
 - **Three dice**: roll three a turn; three of a kind is a triple combo (111 Cave-in: five forced spawns; 666 Mother lode: pick any double combo and roll again; the others are the double plus a wild and a bonus roll).
 - **Overheating spawns**: each spawn heats its slot; at 3 heat the slot locks for the owner's next 2 turns, otherwise it cools by one each of their turns.
-- **Breaking point**: each cell hides a height limit of 5-12; a taller stack punches through and leaves a permanent hole.
+- **Breaking point**: one hidden tower height limit (5-12) for the whole board. A tower that grows past it (reinforce, spawn onto it, merge into it) punches through and leaves a permanent hole; reaching the limit exactly is safe and moving never breaks a tower. A new hidden limit is rolled after each breakthrough. (Changed 2026-10-19 from per-tile limits, which read as inconsistent.)
 - **Piece limit**: cap on pieces per player on the board.
 
 Greedy-bot check after locking the pipe (200 games each, cap 150 rounds):
