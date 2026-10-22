@@ -6,7 +6,7 @@
 
 ![Hex Balance against the hard bot: the hexagonal plate on its pivot, the balance meter and the dice panel](docs/screenshot.jpg)
 
-Hex Balance is a browser recreation of a two-player balance game that Zach Shirley and a friend built in a high-school metalworking class. The board was a hexagonal steel plate resting on a square pipe across its middle. Each player owns the half on their side of the pipe, and you roll dice to add, move, merge and knock over stacks of steel pieces. Weight far from the pipe counts more. If the plate tips toward you, you lose. "Hex Balance" is a working title, because nobody remembers what the original was called.
+Zach Shirley and a best friend designed and built Hex Balance as a physical game in high school, and Zach rebuilt it as a web game in a couple of days with an AI coding agent. The original board was a hexagonal steel plate resting on a square pipe across its middle. Each player owns the half on their side of the pipe, and you roll dice to add, move, merge and knock over stacks of steel pieces. Weight far from the pipe counts more. If the plate tips toward you, you lose. "Hex Balance" is a working title, because nobody remembers what the original was called.
 
 ## How to play
 
@@ -84,7 +84,7 @@ Hosted on Vercel at https://hex-balance.vercel.app. Pushes to `main` on GitHub (
 
 ## How it was built
 
-Zach described the original game from memory: the board, the pivot, the dice meanings and how the balance worked. He supplied a photo of the etched plate, from which the 52-cell layout was counted.
+The web version was rebuilt in a couple of days in October 2026. Zach described the original game from memory: the board, the pivot, the dice meanings and how the balance worked. He supplied a photo of the etched plate, from which the 52-cell layout was counted.
 
 | Element | Source |
 | --- | --- |
