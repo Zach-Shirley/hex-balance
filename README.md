@@ -4,9 +4,28 @@ A browser recreation of the steel hexagonal balance game Zach Shirley and a frie
 
 The board is a hexagonal steel plate balanced on a square pipe that runs across its middle. Each player owns the half on their side of the pipe. Players add, move, merge and strike stacks of hexagonal steel pieces. If the board tips toward you, you lose.
 
-Status: playable hot-seat on one device, or online between two devices. The rules are a reconstruction from memory and are expected to change.
+Status: playable against a bot (easy, medium, hard), hot-seat on one device, or online between two devices. The rules are a reconstruction from memory and are expected to change.
 
 Live (temporary, approved by Zach on 2026-10-15): https://hex-balance.vercel.app. Vercel project `zach-shirleys-projects/hex-balance`, deployed manually with `vercel deploy --prod`; no Git integration.
+
+## Single player (added 2026-10-22)
+
+**Opponent** in the sidebar picks two players on one device or an Easy, Medium or Hard bot. Against a bot you play Red and move first; the bot plays Blue. The choice is saved per device, and switching starts a new game.
+
+The bot (`src/bot.ts`) plays through the same rules engine as people do. It tries the action sequences its dice allow and scores the board each one leaves. The score is mostly the balance ratio, with a steep penalty near tipping toward itself and a small bonus for stacks it controls on the opponent's half.
+- **Easy** plays one die at a time, picks loosely (a random legal move about a third of the time), and only refuses moves that tip the board toward itself.
+- **Medium** plans the whole turn, with a little noise.
+- **Hard** plans the whole turn, then checks the shortlist against every possible opponent roll, with a greedy reply, and keeps the plan that holds up best.
+
+All three take a winning move when one exists and never tip the board toward themselves when they have another choice. None of them can see the hidden breaking-point limit; they assume 7. The bot thinks in a Web Worker, so the board keeps animating.
+
+Bot-vs-bot results, alternating colours (games that hit the turn cap count as unfinished):
+- Default settings: Medium beat Easy 82-5 over two runs, Hard beat Medium 34-21 over two runs, and Hard beat Easy 29-1.
+- Breaking point: Hard beat Medium 9-7.
+- Forced moves: Hard beat Easy 16-0.
+- Three dice: Hard beat Medium 6-5. Its edge mostly disappears here.
+
+The bot has about 2 seconds of thinking per move at most, to keep big combo turns from stalling. It has only been tuned against itself, not against people.
 
 ## Online play
 
@@ -96,7 +115,9 @@ These values can be changed in the in-game **Weight settings** panel.
 - `src/rules.ts`: game state, legal actions, dice, balance and tipping (pure, no DOM)
 - `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks (camera 50 degrees above the near edge; lean rotates the plate about the pipe)
 - `src/net.ts`: PeerJS host/guest sessions
+- `src/bot.ts`, `src/botWorker.ts`: single-player bot and the worker it runs in
 - `src/main.ts`, `src/style.css`: UI, dice panel, balance meter, lean and tip animation, online panel
 - `tests/rules.test.ts`: geometry, balance and action tests
+- `tests/bot.test.ts`: bots only play legal moves through whole games, take wins, avoid self-tips
 
 Built with AI assistance (Claude Code) under Zach's direction; Zach supplied the original game, board photo and rule recollections.

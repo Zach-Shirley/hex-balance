@@ -38,6 +38,7 @@ import {
 import { renderBoard, type Theme } from './view3d';
 import type { Foundry3D } from './scene3d';
 import { GuestSession, HostSession, newRoomCode, type Intent, type NetStatus } from './net';
+import { BOT_LEVELS, BOT_NAMES, botIntent, type BotLevel } from './bot';
 
 // ---------- State ----------
 
@@ -61,6 +62,31 @@ let viewYaw = 0;
 let targetYaw = 0;
 let yawAnim: number | null = null;
 const flipped = () => Math.cos(targetYaw) < 0;
+
+/** The single-player opponent, or null for two players on this device. A per-device preference. */
+let opponent: BotLevel | null = loadOpponent();
+
+function loadOpponent(): BotLevel | null {
+  try {
+    const saved = localStorage.getItem('hex-balance-opponent');
+    return BOT_LEVELS.includes(saved as BotLevel) ? (saved as BotLevel) : null;
+  } catch {
+    return null;
+  }
+}
+
+function setOpponent(next: BotLevel | null) {
+  if (next === opponent) return;
+  if (gameInProgress() && !confirm('Switch opponent? This starts a new game.')) return;
+  opponent = next;
+  try {
+    localStorage.setItem('hex-balance-opponent', next ?? 'local');
+  } catch {
+    // preference lasts for this visit only
+  }
+  setYaw(next ? Math.PI : 0); // you play Red, so view from Red's edge
+  setState(newGame(state.settings));
+}
 
 /** Visual theme; a per-device preference, not part of the game state. */
 let theme: Theme = loadTheme();
@@ -94,7 +120,10 @@ function setTheme(next: Theme) {
   render();
 }
 
-const myColor = (): Player | null => (online.mode === 'host' ? 'red' : online.mode === 'guest' ? 'blue' : null);
+/** Single player: the bot plays Blue and you play Red. Off online, where a person is the opponent. */
+const botColor = (): Player | null => (online.mode === 'local' && opponent ? 'blue' : null);
+const myColor = (): Player | null =>
+  online.mode === 'host' ? 'red' : online.mode === 'guest' ? 'blue' : botColor() ? other(botColor()!) : null;
 const canAct = () => state.phase !== 'over' && (myColor() === null || state.turn === myColor());
 const gameInProgress = () => state.phase !== 'over' && state.log.length > 1;
 
@@ -277,6 +306,80 @@ function scheduleAutoPass() {
   }, AUTO_PASS_MS);
 }
 
+// ---------- Bot turns ----------
+
+const BOT_ROLL_MS = 700;
+const BOT_ACT_MS = 950;
+let botWorker: Worker | null = null;
+let botJob = 0;
+let botKey = '';
+let botTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** The bot thinks in a worker; if workers are unavailable it thinks on the main thread. */
+function askBot(snapshot: GameState, level: BotLevel): Promise<Intent | null> {
+  if (snapshot.phase === 'roll') return Promise.resolve({ type: 'roll' });
+  try {
+    botWorker ??= new Worker(new URL('./botWorker.ts', import.meta.url), { type: 'module' });
+  } catch {
+    botWorker = null;
+  }
+  if (!botWorker) return Promise.resolve(botIntent(snapshot, level));
+  const id = ++botJob;
+  const worker = botWorker;
+  return new Promise((resolve) => {
+    const onMessage = (event: MessageEvent<{ id: number; intent: Intent | null }>) => {
+      if (event.data.id !== id) return;
+      worker.removeEventListener('message', onMessage);
+      resolve(event.data.intent);
+    };
+    worker.addEventListener('message', onMessage);
+    worker.postMessage({ id, state: snapshot, level });
+  });
+}
+
+/** Apply the bot's choice; if it is somehow not legal, fall back to anything legal so the game never stalls. */
+function playBot(intent: Intent | null) {
+  const fallback = (): Intent => {
+    const p = playableActions(state)[0];
+    if (p) return { type: 'act', die: p.die, action: p.action };
+    return { type: 'pass', die: Math.max(0, state.dice.findIndex((d) => !d.used)) };
+  };
+  for (const attempt of [intent, fallback()]) {
+    if (!attempt) continue;
+    try {
+      return setState(resolveIntent(state, attempt));
+    } catch (err) {
+      console.warn('Bot move rejected', attempt, err);
+    }
+  }
+}
+
+/** On the bot's turn, think (with a short minimum pause so its moves can be followed), then play one step. */
+function scheduleBot() {
+  const level = opponent;
+  const mine = botColor();
+  const key = `${state.log.length}|${state.lastAction?.seq ?? 0}|${state.turn}|${state.phase}`;
+  if (!level || !mine || state.turn !== mine || state.phase === 'over') {
+    if (botTimer) clearTimeout(botTimer);
+    botTimer = null;
+    botKey = '';
+    return;
+  }
+  if (key === botKey) return;
+  botKey = key;
+  if (botTimer) clearTimeout(botTimer);
+  const snapshot = state;
+  const started = performance.now();
+  const wait = state.phase === 'roll' ? BOT_ROLL_MS : BOT_ACT_MS;
+  askBot(snapshot, level).then((intent) => {
+    if (state !== snapshot) return; // a new game started meanwhile
+    botTimer = setTimeout(() => {
+      botTimer = null;
+      if (state === snapshot) playBot(intent);
+    }, Math.max(0, wait - (performance.now() - started)));
+  });
+}
+
 // ---------- Online sessions ----------
 
 function setStatus(status: NetStatus, detail?: string) {
@@ -325,7 +428,7 @@ function leaveOnline(rerender = true) {
   guest = null;
   if (online.mode !== 'local') {
     online = { mode: 'local', code: null, status: null, detail: null };
-    setYaw(0);
+    setYaw(opponent ? Math.PI : 0);
     history.replaceState(null, '', location.pathname);
     if (rerender) {
       state = newGame(state.settings);
@@ -549,15 +652,18 @@ const dieFace = (face: DieFace) =>
     .join('')}</svg>`;
 
 /** The dice are a display: they show which actions are available this turn. */
+const waitingText = () =>
+  state.turn === botColor() ? `The ${BOT_NAMES[opponent!].toLowerCase()} bot is thinking…` : `Waiting for ${playerName(state.turn)} to roll…`;
+
 function dicePanel(): string {
   if (state.phase === 'over') return '';
   const mine = canAct();
   if (state.phase === 'roll') {
     const ev = eventBanner();
-    if (ev) return ev + (mine ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>` : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`);
+    if (ev) return ev + (mine ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>` : `<div class="waiting turn-${state.turn}">${waitingText()}</div>`);
     return mine
       ? `<button class="roll-btn turn-${state.turn}" data-act="roll">${state.isBonusRoll ? 'Bonus roll!' : 'Roll dice'} <kbd>Space</kbd></button>`
-      : `<div class="waiting turn-${state.turn}">Waiting for ${playerName(state.turn)} to roll…</div>`;
+      : `<div class="waiting turn-${state.turn}">${waitingText()}</div>`;
   }
   if (state.comboChoice) {
     const banner = state.combo ? `<div class="combo combo-good"><strong>${state.combo.name}!</strong> ${state.combo.text}</div>` : '';
@@ -609,6 +715,7 @@ const KIND_WORD: Record<ActionKind, string> = {
 
 function hint(): string {
   if (state.phase === 'over') return `Game over: the board tipped toward ${playerName(state.loser!)}. Start a new game to play again.`;
+  if (!canAct() && state.turn === botColor()) return `The bot is playing ${playerName(state.turn)}. Watch its moves on the board and in the log.`;
   if (!canAct()) return `${playerName(state.turn)} is playing. You'll see their moves here.`;
   if (state.phase === 'roll') return `${myColor() ? 'Your' : `${playerName(state.turn)}'s`} turn. Roll two dice; each die is one action.`;
   if (state.comboChoice) return 'Mother lode: pick the double combo you want. You roll again after using it.';
@@ -690,23 +797,39 @@ function onlinePanel(): string {
     if (gameInProgress()) return '';
     return `<div class="panel online">
       <h3>Online</h3>
-      <p class="muted">Playing hot-seat on this device. Create a room to play a friend on another device: you are Red, they are Blue.</p>
+      <p class="muted">${opponent ? `Playing the ${BOT_NAMES[opponent].toLowerCase()} bot.` : 'Playing hot-seat on this device.'} Create a room to play a friend on another device: you are Red, they are Blue.</p>
       <button class="ghost-btn wide" data-act="host">Create online room</button>
     </div>`;
   }
   const s = online.status ? STATUS_TEXT[online.status] : '';
   const good = online.status === 'connected';
-  const opponent = online.mode === 'host' ? (good ? 'Your friend is connected.' : s) : good ? 'Connected to the host.' : s;
+  const peer = online.mode === 'host' ? (good ? 'Your friend is connected.' : s) : good ? 'Connected to the host.' : s;
   return `<div class="panel online">
     <h3>Online · room ${online.code}</h3>
     <p>You are <strong class="c-${myColor()}">${playerName(myColor()!)}</strong>.</p>
-    <p class="net-status ${good ? 'ok' : 'pending'}"><span class="dot"></span>${opponent}${online.detail ? ` <span class="muted">${online.detail}</span>` : ''}</p>
+    <p class="net-status ${good ? 'ok' : 'pending'}"><span class="dot"></span>${peer}${online.detail ? ` <span class="muted">${online.detail}</span>` : ''}</p>
     ${
       online.mode === 'host'
         ? `<label class="invite">Send this link to your friend<span class="invite-row"><input readonly value="${inviteLink()}" /><button class="ghost-btn" data-act="copy">${canShare() ? 'Share' : 'Copy'}</button></span></label>`
         : ''
     }
     <button class="ghost-btn wide" data-act="leave">Leave online game</button>
+  </div>`;
+}
+
+function opponentPanel(): string {
+  if (online.mode !== 'local') return '';
+  const opt = (id: BotLevel | null, name: string, blurb: string) =>
+    `<button class="theme-opt ${opponent === id ? 'active' : ''}" data-opponent="${id ?? 'local'}"><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
+  return `<div class="panel opponent-panel">
+    <h3>Opponent</h3>
+    <div class="theme-row">
+      ${opt(null, 'Two players', 'Pass and play on this device')}
+      ${opt('easy', 'Easy bot', 'Loose, makes mistakes')}
+      ${opt('medium', 'Medium bot', 'Plans its whole turn')}
+      ${opt('hard', 'Hard bot', 'Plans for your reply too')}
+    </div>
+    ${opponent ? '<p class="muted">You are <strong class="c-red">Red</strong> and move first; the bot plays <strong class="c-blue">Blue</strong>.</p>' : ''}
   </div>`;
 }
 
@@ -813,6 +936,7 @@ function render() {
           ${dicePanel()}
           <p class="hint">${hint()}</p>
         </div>
+        ${opponentPanel()}
         ${onlinePanel()}
         ${themePanel()}
         <div class="panel log"><h3>Log</h3><ol>${state.log
@@ -828,6 +952,7 @@ function render() {
   animateLean();
   updateShake();
   scheduleAutoPass();
+  scheduleBot();
 }
 
 // ---------- Events ----------
@@ -860,6 +985,8 @@ app.addEventListener('click', (event) => {
     showTitle = false;
     return setTheme('neon');
   }
+  const opp = el.closest<HTMLElement>('[data-opponent]')?.dataset.opponent;
+  if (opp) return setOpponent(BOT_LEVELS.includes(opp as BotLevel) ? (opp as BotLevel) : null);
   if (act === 'host') return startHost();
   if (act === 'leave') {
     if (gameInProgress() && !confirm('Leave the online game? The current game will end.')) return;
@@ -1126,4 +1253,7 @@ const joinCode = params.get('join')?.toUpperCase();
 const hostCode = params.get('host')?.toUpperCase();
 if (joinCode) startGuest(joinCode);
 else if (hostCode) startHost(hostCode, true);
-else render();
+else {
+  if (opponent) setYaw(Math.PI);
+  render();
+}
