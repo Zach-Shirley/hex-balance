@@ -19,10 +19,16 @@ Zach Shirley and a best friend designed and built Hex Balance as a physical game
   - 6: wild
 - Doubles trigger combos. Some help (Stampede gives four moves). Some hurt (Snake eyes forces three spawns on your own edge).
 - Tap a highlighted stack to pick it up and see where it can go, or tap a spawn slot to spawn. The meter beside the board shows how close each side is to tipping, and hovering a move previews where the meter would land. Dice with no legal move are skipped automatically.
+The game opens on a start menu. **Start game** leads to a setup screen with these choices:
 - **Opponent:** two players on one device, or an Easy, Medium or Hard bot. Against a bot you play Red and move first.
-- **Online:** **Create online room** gives you an invite link for a friend on another device.
 - **Style:** Neon (default) or Forge.
-- **Settings and experiments:** plate mass, starting pieces, forced moves, three dice, overheating spawns, a hidden "breaking point" tower height, and a piece limit.
+- **Rules and experiments:**
+  - plate mass and starting pieces;
+  - forced moves;
+  - experiments: three dice, overheating spawns, a hidden "breaking point" tower height, and a piece limit.
+- **Play a friend online:** **Create online room** starts a room with those rules and gives you an invite link for a friend on another device.
+
+During a game, **Menu** returns to the start screen, where you can continue the current game or set up a new one.
 
 The full rules and combo table are in the in-game **Rules** panel.
 
@@ -128,6 +134,8 @@ A physical estimate of the real plate (about 145 piece-weights, half-width about
 - how much push each side's pieces still have as they advance;
 - the odds, over every possible next roll (including forced combos), that someone can tip the board;
 - having pieces in play at all.
+
+Passing on a die that still has a legal move also costs the bot something, because the opponent keeps building while it waits. That cost was added on 2026-10-22, after Zach saw the bot sit on its lead and pass turn after turn.
 
 Easy plays one die at a time and is often random. Medium plans its whole turn. Hard also checks every possible opponent reply roll. The bots run in a Web Worker so the board keeps animating.
 

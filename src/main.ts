@@ -66,6 +66,15 @@ const flipped = () => Math.cos(targetYaw) < 0;
 /** The single-player opponent, or null for two players on this device. A per-device preference. */
 let opponent: BotLevel | null = loadOpponent();
 
+/** Start menu (no board) → setup (opponent, style, rules) → the game. Online links go straight to the game. */
+type Screen = 'title' | 'setup' | 'game';
+let screen: Screen = 'title';
+/** The opponent chosen on the setup screen; applied when the game starts. */
+let setupOpponent: BotLevel | null = opponent;
+/** Rule edits on the setup screen, kept while it redraws (picking an opponent or style). */
+let setupDraft: Settings | null = null;
+let rulesOpen = false;
+
 function loadOpponent(): BotLevel | null {
   try {
     const saved = localStorage.getItem('hex-balance-opponent');
@@ -75,17 +84,13 @@ function loadOpponent(): BotLevel | null {
   }
 }
 
-function setOpponent(next: BotLevel | null) {
-  if (next === opponent) return;
-  if (gameInProgress() && !confirm('Switch opponent? This starts a new game.')) return;
+function saveOpponent(next: BotLevel | null) {
   opponent = next;
   try {
     localStorage.setItem('hex-balance-opponent', next ?? 'local');
   } catch {
     // preference lasts for this visit only
   }
-  setYaw(next ? Math.PI : 0); // you play Red, so view from Red's edge
-  setState(newGame(state.settings));
 }
 
 /** Visual theme; a per-device preference, not part of the game state. */
@@ -359,7 +364,7 @@ function scheduleBot() {
   const level = opponent;
   const mine = botColor();
   const key = `${state.log.length}|${state.lastAction?.seq ?? 0}|${state.turn}|${state.phase}`;
-  if (!level || !mine || state.turn !== mine || state.phase === 'over') {
+  if (!level || !mine || state.turn !== mine || state.phase === 'over' || screen !== 'game') {
     if (botTimer) clearTimeout(botTimer);
     botTimer = null;
     botKey = '';
@@ -375,7 +380,7 @@ function scheduleBot() {
     if (state !== snapshot) return; // a new game started meanwhile
     botTimer = setTimeout(() => {
       botTimer = null;
-      if (state === snapshot) playBot(intent);
+      if (state === snapshot && screen === 'game') playBot(intent);
     }, Math.max(0, wait - (performance.now() - started)));
   });
 }
@@ -432,6 +437,7 @@ function leaveOnline(rerender = true) {
     history.replaceState(null, '', location.pathname);
     if (rerender) {
       state = newGame(state.settings);
+      screen = 'title';
       render();
     }
   }
@@ -792,15 +798,7 @@ const STATUS_TEXT: Record<NetStatus, string> = {
 };
 
 function onlinePanel(): string {
-  if (online.mode === 'local') {
-    // Hidden mid-game so a stray tap can't throw away the current game.
-    if (gameInProgress()) return '';
-    return `<div class="panel online">
-      <h3>Online</h3>
-      <p class="muted">${opponent ? `Playing the ${BOT_NAMES[opponent].toLowerCase()} bot.` : 'Playing hot-seat on this device.'} Create a room to play a friend on another device: you are Red, they are Blue.</p>
-      <button class="ghost-btn wide" data-act="host">Create online room</button>
-    </div>`;
-  }
+  if (online.mode === 'local') return '';
   const s = online.status ? STATUS_TEXT[online.status] : '';
   const good = online.status === 'connected';
   const peer = online.mode === 'host' ? (good ? 'Your friend is connected.' : s) : good ? 'Connected to the host.' : s;
@@ -817,22 +815,6 @@ function onlinePanel(): string {
   </div>`;
 }
 
-function opponentPanel(): string {
-  if (online.mode !== 'local') return '';
-  const opt = (id: BotLevel | null, name: string, blurb: string) =>
-    `<button class="theme-opt ${opponent === id ? 'active' : ''}" data-opponent="${id ?? 'local'}"><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
-  return `<div class="panel opponent-panel">
-    <h3>Opponent</h3>
-    <div class="theme-row">
-      ${opt(null, 'Two players', 'Pass and play on this device')}
-      ${opt('easy', 'Easy bot', 'Loose, makes mistakes')}
-      ${opt('medium', 'Medium bot', 'Plans its whole turn')}
-      ${opt('hard', 'Hard bot', 'Plans for your reply too')}
-    </div>
-    ${opponent ? '<p class="muted">You are <strong class="c-red">Red</strong> and move first; the bot plays <strong class="c-blue">Blue</strong>.</p>' : ''}
-  </div>`;
-}
-
 function themePanel(): string {
   const opt = (id: Theme, name: string, blurb: string) =>
     `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
@@ -842,17 +824,13 @@ function themePanel(): string {
   </div>`;
 }
 
-function settingsPanel(): string {
-  const locked = online.mode === 'guest';
-  const off = locked ? 'disabled' : '';
-  const s = state.settings;
+function settingsFields(): string {
+  const off = '';
+  const s = setupDraft ?? state.settings;
   const edgePieces = Math.ceil((PIPE_HALF_WIDTH * s.boardMass) / (3.5 - PIPE_HALF_WIDTH));
   const check = (name: string, on: boolean, label: string) =>
     `<label class="check"><input type="checkbox" name="${name}" ${on ? 'checked' : ''} ${off} /><span>${label}</span></label>`;
-  return `<details class="panel settings">
-    <summary>Settings and experiments</summary>
-    ${locked ? '<p class="muted">Only the host can change settings or start a new game.</p>' : ''}
-    <h4>Weight</h4>
+  return `<h4>Weight</h4>
     <label>Plate mass <span>(piece-weights)</span><input type="number" name="boardMass" min="0" step="5" value="${s.boardMass}" ${off} /></label>
     <label>Starting pieces per spawn slot<input type="number" name="startingPieces" min="0" max="5" step="1" value="${s.startingPieces}" ${off} /></label>
     <p class="muted">Pipe half-width is locked at ${PIPE_HALF_WIDTH}. With these values, about ${edgePieces} unopposed pieces on a far edge tip the board.</p>
@@ -862,9 +840,87 @@ function settingsPanel(): string {
     ${check('threeDice', s.diceCount === 3, '<strong>Three dice</strong>: roll three dice a turn; three of a kind is a triple combo')}
     ${check('overheat', s.overheat, `<strong>Overheating spawns</strong>: each spawn heats its slot; ${OVERHEAT_AT} heat locks it for your next ${OVERHEAT_TURNS} turns. Slots cool by one each of your turns`)}
     ${check('towerBreak', s.towerBreak, `<strong>Breaking point</strong>: one hidden tower height limit (${BREAK_MIN}-${BREAK_MAX}) for the whole board. Grow a tower past it and it punches through, leaving a permanent hole; then a new hidden limit is set`)}
-    <label>Piece limit per player <span>(0 = no limit)</span><input type="number" name="pieceLimit" min="0" max="99" step="1" value="${s.pieceLimit}" ${off} /></label>
-    ${locked ? '' : '<button class="ghost-btn" data-act="apply-settings">Apply and restart</button>'}
-  </details>`;
+    <label>Piece limit per player <span>(0 = no limit)</span><input type="number" name="pieceLimit" min="0" max="99" step="1" value="${s.pieceLimit}" ${off} /></label>`;
+}
+
+/** Read the setup screen's rule fields. */
+function readSettingsForm(): Settings {
+  const input = (name: string) => app.querySelector<HTMLInputElement>(`input[name="${name}"]`)!;
+  const num = (name: string) => Number(input(name).value);
+  return {
+    boardMass: Math.max(0, num('boardMass') || 0),
+    startingPieces: Math.max(0, Math.min(5, Math.round(num('startingPieces') || 0))),
+    forcedMoves: input('forcedMoves').checked,
+    overheat: input('overheat').checked,
+    towerBreak: input('towerBreak').checked,
+    diceCount: input('threeDice').checked ? 3 : 2,
+    pieceLimit: Math.max(0, Math.min(99, Math.round(num('pieceLimit') || 0))),
+  };
+}
+
+// ---------- Start menu ----------
+
+function titleView(): string {
+  const resume = gameInProgress() ? '<button class="ghost-btn menu-wide" data-act="resume">Continue current game</button>' : '';
+  return `<div class="menu-screen title-screen">
+    <div class="menu-hexes" aria-hidden="true"></div>
+    <div class="title-inner">
+      <div class="title-mark" aria-hidden="true"><span class="tm-red"></span><span class="tm-pipe"></span><span class="tm-blue"></span></div>
+      <h1 class="title-name">Hex Balance</h1>
+      <p class="title-tag">Load the steel plate. Tip it toward your rival before it tips toward you.</p>
+      <button class="roll-btn menu-wide title-start" data-act="to-setup">Start game</button>
+      ${resume}
+    </div>
+  </div>`;
+}
+
+function setupView(): string {
+  const opp = (id: BotLevel | null, name: string, blurb: string) =>
+    `<button class="theme-opt ${setupOpponent === id ? 'active' : ''}" data-opponent="${id ?? 'local'}"><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
+  const style = (id: Theme, name: string, blurb: string) =>
+    `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
+  return `<div class="menu-screen setup-screen">
+    <div class="setup-card">
+      <header class="setup-head">
+        <button class="ghost-btn" data-act="to-title">← Back</button>
+        <h2>New game</h2>
+      </header>
+      <section class="setup-section">
+        <h3>Opponent</h3>
+        <div class="theme-row">
+          ${opp(null, 'Two players', 'Pass and play on this device')}
+          ${opp('easy', 'Easy bot', 'Loose, makes mistakes')}
+          ${opp('medium', 'Medium bot', 'Plans its whole turn')}
+          ${opp('hard', 'Hard bot', 'Plans for your reply too')}
+        </div>
+        <p class="muted">${setupOpponent ? 'You play <strong class="c-red">Red</strong> and move first; the bot plays <strong class="c-blue">Blue</strong>.' : 'Red moves first. Hand the device over each turn.'}</p>
+      </section>
+      <section class="setup-section">
+        <h3>Style</h3>
+        <div class="theme-row">${style('neon', 'Neon', 'Glowing edges, arcade night')}${style('forge', 'Forge', 'Riveted iron, 1880s mill')}</div>
+      </section>
+      <details class="setup-section settings" ${rulesOpen ? 'open' : ''}>
+        <summary>Rules and experiments</summary>
+        ${settingsFields()}
+      </details>
+      <button class="roll-btn menu-wide" data-act="start">Start game</button>
+      <section class="setup-section setup-online">
+        <h3>Play a friend online</h3>
+        <p class="muted">Opens a room with these rules: you are Red and get a link to send; your friend plays Blue on their device.</p>
+        <button class="ghost-btn menu-wide" data-act="host">Create online room</button>
+      </section>
+    </div>
+  </div>`;
+}
+
+function menuRender() {
+  const form = app.querySelector<HTMLDetailsElement>('.setup-screen details.settings');
+  if (form) {
+    setupDraft = readSettingsForm();
+    rulesOpen = form.open;
+  }
+  app.innerHTML = screen === 'title' ? titleView() : setupView();
+  scheduleBot();
 }
 
 function comboTable(): string {
@@ -908,6 +964,7 @@ function resultCard(): string {
 }
 
 function render() {
+  if (screen !== 'game') return menuRender();
   if (theme === 'foundry') return renderFoundry();
   const far: Player = flipped() ? 'blue' : 'red';
   const near = other(far);
@@ -918,7 +975,7 @@ function render() {
       <h1>Hex Balance</h1>
       <div class="turn turn-${state.turn}">${turnText}</div>
       <button class="ghost-btn" data-act="rotate" title="Turn the board around">Rotate<span class="long"> view</span></button>
-      ${online.mode === 'guest' ? '' : '<button class="ghost-btn" data-act="new">New<span class="long"> game</span></button>'}
+      ${online.mode === 'local' ? '<button class="ghost-btn" data-act="to-title">Menu</button>' : online.mode === 'host' ? '<button class="ghost-btn" data-act="new">New<span class="long"> game</span></button>' : ''}
     </header>
     ${balanceStatus()}
     <main class="layout">
@@ -936,16 +993,14 @@ function render() {
           ${dicePanel()}
           <p class="hint">${hint()}</p>
         </div>
-        ${opponentPanel()}
+        ${opponent && online.mode === 'local' ? `<p class="vs-line muted">Playing the <strong>${BOT_NAMES[opponent].toLowerCase()} bot</strong> · change it from the Menu</p>` : ''}
         ${onlinePanel()}
-        ${themePanel()}
         <div class="panel log"><h3>Log</h3><ol>${state.log
           .slice(-14)
           .reverse()
           .map((l) => `<li>${l}</li>`)
           .join('')}</ol></div>
         ${rulesPanel()}
-        ${settingsPanel()}
       </aside>
     </main>`;
   drawBoard();
@@ -986,7 +1041,36 @@ app.addEventListener('click', (event) => {
     return setTheme('neon');
   }
   const opp = el.closest<HTMLElement>('[data-opponent]')?.dataset.opponent;
-  if (opp) return setOpponent(BOT_LEVELS.includes(opp as BotLevel) ? (opp as BotLevel) : null);
+  if (opp) {
+    setupOpponent = BOT_LEVELS.includes(opp as BotLevel) ? (opp as BotLevel) : null;
+    return render();
+  }
+  if (act === 'to-setup') {
+    setupOpponent = opponent;
+    setupDraft = null;
+    rulesOpen = false;
+    screen = 'setup';
+    return render();
+  }
+  if (act === 'to-title') {
+    selected = null;
+    screen = 'title';
+    return render();
+  }
+  if (act === 'resume') {
+    screen = 'game';
+    return render();
+  }
+  if (act === 'start' || (act === 'host' && screen === 'setup')) {
+    const settings = readSettingsForm();
+    saveSettings(settings);
+    state = newGame(settings);
+    screen = 'game';
+    if (act === 'host') return startHost();
+    saveOpponent(setupOpponent);
+    setYaw(opponent ? Math.PI : 0); // against a bot you play Red, so view from Red's edge
+    return setState(newGame(settings));
+  }
   if (act === 'host') return startHost();
   if (act === 'leave') {
     if (gameInProgress() && !confirm('Leave the online game? The current game will end.')) return;
@@ -1008,21 +1092,6 @@ app.addEventListener('click', (event) => {
     navigator.clipboard?.writeText(inviteLink()).catch(() => undefined);
     el.textContent = 'Copied';
     return;
-  }
-  if (act === 'apply-settings') {
-    if (online.mode === 'guest') return;
-    const read = (name: string) => Number(app.querySelector<HTMLInputElement>(`input[name="${name}"]`)!.value);
-    const settings: Settings = {
-      boardMass: Math.max(0, read('boardMass') || 0),
-      startingPieces: Math.max(0, Math.min(5, Math.round(read('startingPieces') || 0))),
-      forcedMoves: app.querySelector<HTMLInputElement>('input[name="forcedMoves"]')!.checked,
-      overheat: app.querySelector<HTMLInputElement>('input[name="overheat"]')!.checked,
-      towerBreak: app.querySelector<HTMLInputElement>('input[name="towerBreak"]')!.checked,
-      diceCount: app.querySelector<HTMLInputElement>('input[name="threeDice"]')!.checked ? 3 : 2,
-      pieceLimit: Math.max(0, Math.min(99, Math.round(read('pieceLimit') || 0))),
-    };
-    saveSettings(settings);
-    return setState(newGame(settings));
   }
   const kind = el.closest<HTMLElement>('[data-inplace]')?.dataset.inplace;
   if (kind) {
@@ -1070,7 +1139,7 @@ app.addEventListener('mouseover', (event) => {
 });
 
 window.addEventListener('keydown', (event) => {
-  if ((event.target as HTMLElement).tagName === 'INPUT') return;
+  if ((event.target as HTMLElement).tagName === 'INPUT' || screen !== 'game') return;
   if (event.code === 'Space' || event.code === 'Enter') {
     if (state.phase === 'roll' && canAct()) {
       event.preventDefault();
@@ -1228,7 +1297,7 @@ function renderFoundry() {
         ${online.mode === 'guest' ? '' : '<button class="fd-btn fd-btn-hot wide" data-act="new">New duel</button>'}
         ${themePanel()}
         ${onlinePanel()}
-        ${settingsPanel()}
+
         ${rulesPanel()}
         <div class="panel log"><h3>Shift log</h3><ol>${state.log
           .slice(-30)
@@ -1251,6 +1320,7 @@ applyThemeAttributes();
 const params = new URLSearchParams(location.search);
 const joinCode = params.get('join')?.toUpperCase();
 const hostCode = params.get('host')?.toUpperCase();
+if (joinCode || hostCode) screen = 'game';
 if (joinCode) startGuest(joinCode);
 else if (hostCode) startHost(hostCode, true);
 else {
