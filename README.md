@@ -37,7 +37,7 @@ npm run build   # typecheck + production bundle
 
 ## Deployment
 
-Hosted on Vercel at https://hex-balance.vercel.app. Pushes to `main` on GitHub deploy automatically (see the note at the end if that has not been connected yet). It is a static Vite build, with no backend of its own.
+Hosted on Vercel at https://hex-balance.vercel.app. Pushes to `main` on GitHub (https://github.com/Zach-Shirley/hex-balance) deploy to production automatically through Vercel's Git integration. It is a static Vite build, with no backend of its own.
 
 ## Verification
 
