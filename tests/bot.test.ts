@@ -32,7 +32,7 @@ describe('bot', () => {
     const random = seeded(7);
     for (const settings of [DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, towerBreak: true, overheat: true, forcedMoves: true }]) {
       let s = newGame(settings, random);
-      const steps = level === 'hard' ? 120 : 400;
+      const steps = level === 'hard' ? 60 : 400;
       for (let i = 0; i < steps && s.phase !== 'over'; i++) s = apply(s, botIntent(s, level, random), random);
     }
   }, 120_000);

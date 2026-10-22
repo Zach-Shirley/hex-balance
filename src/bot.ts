@@ -19,6 +19,7 @@ import {
   skipDie,
   DOUBLE_COMBOS,
   allowedKinds,
+  dieIsPlayable,
   legalActions,
   piecesOf,
   type Die,
@@ -56,7 +57,9 @@ export const WEIGHTS = {
   /** How much that future advance counts compared with weight already in place. */
   potential: 0.9,
   /** Pieces in play: with none you can only use spawn and wild dice. Diminishing returns. */
-  material: 2,
+  material: 3,
+  /** Cost of passing a die that still had a legal action (lost tempo). */
+  idle: 1.2,
   /** Extra material penalty for having no pieces on the board at all. */
   empty: 2,
   /** Penalty, times the chance the opponent can tip the board on their next roll. */
@@ -209,11 +212,13 @@ export function evaluate(state: GameState, me: Player): number {
 interface Plan {
   steps: Intent[];
   end: GameState;
+  /** Dice passed while they still had a legal action. */
+  idle: number;
 }
 
 /** The legal one-step continuations of a mid-turn state (actions, plus passing a die). */
-function continuations(state: GameState): { intent: Intent; next: GameState }[] {
-  const out: { intent: Intent; next: GameState }[] = [];
+function continuations(state: GameState): { intent: Intent; next: GameState; idle?: boolean }[] {
+  const out: { intent: Intent; next: GameState; idle?: boolean }[] = [];
   for (const p of playableActions(state)) {
     try {
       out.push({ intent: { type: 'act', die: p.die, action: p.action }, next: applyAction(state, p.die, p.action) });
@@ -224,7 +229,7 @@ function continuations(state: GameState): { intent: Intent; next: GameState }[] 
   const unused = state.dice.flatMap((d, i) => (d.used ? [] : [i]));
   // Passing: one pass option is enough (which die is passed only matters for what stays playable).
   const passable = unused.filter((i) => canPass(state, i));
-  for (const i of passable) out.push({ intent: { type: 'pass', die: i }, next: skipDie(state, i) });
+  for (const i of passable) out.push({ intent: { type: 'pass', die: i }, next: skipDie(state, i), idle: dieIsPlayable(state, i) });
   return out;
 }
 
@@ -235,18 +240,18 @@ function plans(state: GameState, me: Player, cap = 2000): Plan[] {
   const out: Plan[] = [];
   const deadline = Date.now() + PLAN_MS;
   const seen = new Set<string>();
-  const walk = (s: GameState, steps: Intent[]) => {
+  const walk = (s: GameState, steps: Intent[], idle: number) => {
     if (out.length >= cap || (out.length > 0 && Date.now() > deadline)) return;
     if (!stillMine(s, me)) {
       const key = JSON.stringify([s.stacks, s.phase, s.turn, s.holes]);
       if (seen.has(key)) return;
       seen.add(key);
-      out.push({ steps, end: s });
+      out.push({ steps, end: s, idle });
       return;
     }
-    for (const c of continuations(s)) walk(c.next, [...steps, c.intent]);
+    for (const c of continuations(s)) walk(c.next, [...steps, c.intent], idle + (c.idle ? 1 : 0));
   };
-  walk(state, []);
+  walk(state, [], 0);
   return out;
 }
 
@@ -330,7 +335,8 @@ export function botIntent(real: GameState, level: BotLevel, random: Rand = Math.
   const all = plans(state, me);
   if (!all.length) return { type: 'pass', die: Math.max(0, state.dice.findIndex((d) => !d.used)) };
 
-  const scored = all.map((p) => ({ p, v: evaluate(p.end, me) + (level === 'medium' ? (random() - 0.5) * 1.6 : 0) }));
+  // Sitting on a usable die costs tempo: the opponent keeps building while you wait.
+  const scored = all.map((p) => ({ p, v: evaluate(p.end, me) - WEIGHTS.idle * p.idle + (level === 'medium' ? (random() - 0.5) * 1.6 : 0) }));
   scored.sort((a, b) => b.v - a.v);
   const winNow = scored.find((s) => s.p.end.phase === 'over' && s.p.end.loser !== me);
   if (winNow) return winNow.p.steps[0];
@@ -344,7 +350,7 @@ export function botIntent(real: GameState, level: BotLevel, random: Rand = Math.
   const deadline = Date.now() + REPLY_MS;
   for (const s of shortlist) {
     if (bestScore > -Infinity && Date.now() > deadline) break; // out of time: keep the best checked so far
-    const v = expectedAfterReply(s.p.end, me);
+    const v = expectedAfterReply(s.p.end, me) - WEIGHTS.idle * s.p.idle;
     if (v > bestScore) {
       bestScore = v;
       best = s;
