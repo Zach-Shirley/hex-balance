@@ -17,6 +17,13 @@ import {
   other,
   playableActions,
   skipDie,
+  DOUBLE_COMBOS,
+  allowedKinds,
+  legalActions,
+  piecesOf,
+  type Die,
+  type Action,
+  type ActionKind,
   type DieFace,
   type GameState,
   type Player,
@@ -42,35 +49,160 @@ function sandbox(state: GameState): GameState {
   return { ...state, log: [], breakLimit: state.settings.towerBreak ? ASSUMED_BREAK : state.breakLimit };
 }
 
+/** Scoring weights (exported so tuning runs can try other values). */
+export const WEIGHTS = {
+  /** How far (in lever-arm units) a stack is expected to advance over the next few turns. */
+  reach: 4,
+  /** How much that future advance counts compared with weight already in place. */
+  potential: 0.9,
+  /** Pieces in play: with none you can only use spawn and wild dice. Diminishing returns. */
+  material: 2,
+  /** Extra material penalty for having no pieces on the board at all. */
+  empty: 2,
+  /** Penalty, times the chance the opponent can tip the board on their next roll. */
+  threat: 30,
+  /** Bonus, times the chance I can tip it on my roll after that. */
+  chance: 5,
+};
+
+const MAX_ARM = 3.5;
+
 /**
- * How good the board is for `me`, roughly in "tenths of the way to tipping". The core is
- * the balance ratio; being close to tipping toward yourself is punished extra because the
- * opponent only needs a small push, and stacks you control on the far side count a little
- * as future leverage (they can be reinforced).
+ * How much torque a player's stacks can still add by advancing toward the far edge. A piece
+ * at your own edge has the most left to give; one already at the far edge has none. This is
+ * why spawning is worth something even though it weighs on your own side right now.
+ */
+function advancePotential(state: GameState, player: Player): number {
+  const sign = player === 'red' ? 1 : -1;
+  let total = 0;
+  state.stacks.forEach((stack, id) => {
+    if (!stack || stack.owner !== player) return;
+    const a = leverArm(id) * sign;
+    total += stack.count * Math.max(0, Math.min(MAX_ARM, a + WEIGHTS.reach) - a);
+  });
+  return total;
+}
+
+/** Torque an action adds toward `player`'s win (positive = good for them), without playing it. */
+function actionGain(state: GameState, player: Player, action: Action): number {
+  const sign = player === 'red' ? 1 : -1;
+  const arm = (id: number) => leverArm(id) * sign;
+  const count = (id: number) => state.stacks[id]?.count ?? 0;
+  switch (action.kind) {
+    case 'spawn':
+    case 'reinforce':
+      return arm(action.to);
+    case 'move':
+    case 'merge':
+      return count(action.from) * (arm(action.to) - arm(action.from));
+    case 'split':
+      return Math.floor(count(action.from) / 2) * (arm(action.to) - arm(action.from));
+    case 'strike':
+      return -arm(action.to);
+    case 'convert':
+      return 0;
+  }
+}
+
+/** The dice each distinct roll gives (combos applied), with its probability. Cached per dice count. */
+const ROLL_TABLE = new Map<number, { dice: Die[]; p: number }[]>();
+function rollTable(diceCount: number) {
+  let table = ROLL_TABLE.get(diceCount);
+  if (!table) {
+    table = rollOutcomes(diceCount).map(({ faces, p }) => {
+      const built = buildDice(faces, true);
+      // Mother lode: assume the strongest pick (two wilds).
+      return { dice: built.choice ? DOUBLE_COMBOS[6].dice(6) : built.dice, p };
+    });
+    ROLL_TABLE.set(diceCount, table);
+  }
+  return table;
+}
+
+/**
+ * When `player` rolls next: the chance their roll lets them tip the board toward the other
+ * side, and the chance a forced combo (snake eyes, supply drop) tips it toward themselves.
+ * Each die is credited with its best single action (or its least bad one, if forced).
+ */
+function rollOdds(state: GameState, player: Player, needed: number, margin: number): { win: number; lose: number } {
+  const as: GameState = { ...state, turn: player };
+  const best: Partial<Record<ActionKind, number>> = {};
+  const forced: Partial<Record<ActionKind, number>> = {};
+  for (const kind of ['spawn', 'move', 'merge', 'split', 'strike', 'reinforce'] as ActionKind[]) {
+    let top = -Infinity;
+    for (const action of legalActions(as, kind)) top = Math.max(top, actionGain(state, player, action));
+    best[kind] = Math.max(0, top);
+    forced[kind] = top === -Infinity ? 0 : top; // a forced die with no legal move is skipped
+  }
+  let win = 0;
+  let lose = 0;
+  for (const { dice, p } of rollTable(state.settings.diceCount)) {
+    let push = 0;
+    let harm = 0;
+    for (const die of dice) {
+      const kinds = allowedKinds(die);
+      if (die.forced) {
+        const g = Math.max(...kinds.map((k) => forced[k] ?? 0));
+        push += g;
+        harm += Math.min(0, g);
+      } else push += Math.max(...kinds.map((k) => best[k] ?? 0));
+    }
+    if (push >= needed) win += p;
+    else if (-harm >= margin) lose += p;
+  }
+  return { win, lose };
+}
+
+/**
+ * How good the board is for `me`, roughly in "tenths of the way to tipping". It weighs:
+ * the balance now (with extra danger near tipping toward me), what each side's pieces can
+ * still do as they advance, and whether either side can tip the board on its next turn.
  */
 export function evaluate(state: GameState, me: Player): number {
   if (state.phase === 'over') return state.loser === me ? -WIN : WIN;
+  const them = other(me);
   const sign = me === 'red' ? 1 : -1;
-  const r = balance(state).ratio * sign; // > 0: the board leans toward the opponent
+  const b = balance(state);
+  const r = b.ratio * sign; // > 0: the board leans toward the opponent
   let score = r * 10;
   if (r < 0) score -= 18 * (-r) ** 3; // danger grows fast near the edge
   else score += 8 * r ** 3;
 
-  let leverage = 0;
-  let exposure = 0;
-  state.stacks.forEach((stack, id) => {
-    if (!stack) return;
-    const arm = leverArm(id) * sign; // > 0: on the opponent's half
-    if (stack.owner === me) {
-      if (arm > 0) leverage += Math.min(arm, 3.5) * 0.25;
-    } else if (arm < 0) {
-      exposure += Math.min(-arm, 3.5) * 0.25;
-    }
-  });
+  // Future: pieces in hand are worth what they can still push.
+  const theyMoveNext = !(state.phase === 'roll' && state.turn === me);
+  const mine = advancePotential(state, me);
+  const theirs = advancePotential(state, them) * (theyMoveNext ? 1.15 : 1);
+  score += (WEIGHTS.potential * 10 * (mine - theirs)) / b.threshold;
+
+  // Threat: can they tip it toward me on their next roll? Can I tip it on mine after?
+  // (Adding pieces also raises the threshold slightly; ignored here.)
+  const myMargin = b.threshold + b.torque * sign;
+  const theirMargin = b.threshold - b.torque * sign;
+  if (theyMoveNext) {
+    const theirRoll = rollOdds(state, them, myMargin, theirMargin);
+    score -= WEIGHTS.threat * theirRoll.win;
+    score += WEIGHTS.threat * theirRoll.lose;
+    const myRoll = rollOdds(state, me, theirMargin, myMargin);
+    score += WEIGHTS.chance * myRoll.win;
+    score -= WEIGHTS.chance * 2 * myRoll.lose;
+  } else {
+    // Bonus roll: I roll again before they do.
+    const myRoll = rollOdds(state, me, theirMargin, myMargin);
+    score += WEIGHTS.chance * 2 * myRoll.win;
+    score -= WEIGHTS.threat * myRoll.lose;
+  }
+
+  // Material: having pieces to act with at all (diminishing, so it never outweighs balance).
+  // With none, only spawn and wild dice do anything, so the first piece counts the most.
+  const pieces = (p: Player) => {
+    const n = piecesOf(state, p);
+    return n === 0 ? -WEIGHTS.empty : Math.sqrt(Math.min(n, 9));
+  };
+  score += WEIGHTS.material * (pieces(me) - pieces(them));
+
   // Enemy stacks parked on my spawn slots stop me spawning.
-  for (const id of SPAWNS[me]) if (state.stacks[id] && state.stacks[id]!.owner !== me) exposure += 0.3;
-  score += 0.25 * (leverage - exposure);
-  if (state.phase === 'roll' && state.turn === me) score += 1.2; // a bonus roll is worth something
+  for (const id of SPAWNS[me]) if (state.stacks[id] && state.stacks[id]!.owner !== me) score -= 0.4;
+  if (!theyMoveNext) score += 1.2; // a bonus roll is worth something
   return score;
 }
 

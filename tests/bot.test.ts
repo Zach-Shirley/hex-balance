@@ -64,4 +64,16 @@ describe('bot', () => {
       }
     }
   });
+
+  it('spawns when it has nothing on the board and no lead to protect', () => {
+    // Blue (the bot) has no pieces and the board is level: Red has one piece either side of the pipe.
+    const s0 = newGame({ ...DEFAULT_SETTINGS, startingPieces: 0 });
+    const stacks = s0.stacks.slice();
+    stacks[cellAt(4, 6)!] = { owner: 'red', count: 1 };
+    stacks[cellAt(4, 8)!] = { owner: 'red', count: 1 };
+    const s: GameState = { ...s0, stacks, turn: 'blue', phase: 'act', dice: [{ face: 1, used: false }, { face: 4, used: false }] };
+    for (const level of ['medium', 'hard'] as BotLevel[]) {
+      expect(JSON.stringify(botIntent(s, level))).toContain('spawn');
+    }
+  });
 });

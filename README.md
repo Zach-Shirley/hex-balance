@@ -12,18 +12,28 @@ Live (temporary, approved by Zach on 2026-10-15): https://hex-balance.vercel.app
 
 **Opponent** in the sidebar picks two players on one device or an Easy, Medium or Hard bot. Against a bot you play Red and move first; the bot plays Blue. The choice is saved per device, and switching starts a new game.
 
-The bot (`src/bot.ts`) plays through the same rules engine as people do. It tries the action sequences its dice allow and scores the board each one leaves. The score is mostly the balance ratio, with a steep penalty near tipping toward itself and a small bonus for stacks it controls on the opponent's half.
+The bot (`src/bot.ts`) plays through the same rules engine as people do. It tries the action sequences its dice allow and scores the board each one leaves. The score has four parts:
+- **Balance now:** the balance ratio, with a steep penalty near tipping toward itself.
+- **Future push:** how much torque each side's stacks can still add by advancing. A piece at your own edge has the most left to give, which is why spawning can be worth its immediate cost.
+- **Next-roll odds:** for every possible roll, including forced combos like snake eyes and supply drop, whether the next player can tip the board, or will be forced to tip it toward themselves.
+- **Material:** having pieces at all, with a penalty for having none, since then only spawn and wild dice do anything.
+
+Revised 2026-10-22 after Zach beat Medium by building one tall stack and marching it across while the bot never spawned. Testing used a scripted "rusher" opponent that plays that strategy.
 - **Easy** plays one die at a time, picks loosely (a random legal move about a third of the time), and only refuses moves that tip the board toward itself.
 - **Medium** plans the whole turn, with a little noise.
 - **Hard** plans the whole turn, then checks the shortlist against every possible opponent roll, with a greedy reply, and keeps the plan that holds up best.
 
 All three take a winning move when one exists and never tip the board toward themselves when they have another choice. None of them can see the hidden breaking-point limit; they assume 7. The bot thinks in a Web Worker, so the board keeps animating.
 
-Bot-vs-bot results, alternating colours (games that hit the turn cap count as unfinished):
-- Default settings: Medium beat Easy 82-5 over two runs, Hard beat Medium 34-21 over two runs, and Hard beat Easy 29-1.
+Bot-vs-bot results after the 2026-10-22 revision (alternating colours; unfinished games hit the turn cap):
+- Default settings: Medium beat Easy 27-3, Hard beat Medium 20-9, new Medium beat the previous Medium 25-13, and new Hard beat the previous Hard 17-11.
+- Against the rusher: Medium won 30-7 (the previous Medium went 19-10), Hard won 23-6, and Easy lost 7-23.
+- Most remaining losses to the rusher come from combo swings (supply drop, stampede, jackpot), not slow play.
+
+Earlier numbers for the first version (three dice, breaking point and forced moves were not re-run after the revision):
 - Breaking point: Hard beat Medium 9-7.
 - Forced moves: Hard beat Easy 16-0.
-- Three dice: Hard beat Medium 6-5. Its edge mostly disappears here.
+- Three dice: Hard beat Medium 6-5.
 
 The bot has about 2 seconds of thinking per move at most, to keep big combo turns from stalling. It has only been tuned against itself, not against people.
 
