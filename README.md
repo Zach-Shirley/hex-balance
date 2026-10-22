@@ -1,62 +1,94 @@
 # Hex Balance
 
-A browser recreation of the steel hexagonal balance game Zach Shirley and a friend built in a high-school metalworking class. "Hex Balance" is a working title; the original name is not known.
+**Status: playable prototype.** You can play it against a bot (easy, medium or hard), hot-seat on one device, or online between two devices. The rules are reconstructed from memory and still change as it gets played.
 
-The board is a hexagonal steel plate balanced on a square pipe that runs across its middle. Each player owns the half on their side of the pipe. Players add, move, merge and strike stacks of hexagonal steel pieces. If the board tips toward you, you lose.
+**Live:** https://hex-balance.vercel.app
 
-Status: playable against a bot (easy, medium, hard), hot-seat on one device, or online between two devices. The rules are a reconstruction from memory and are expected to change.
+![Hex Balance against the hard bot: the hexagonal plate on its pivot, the balance meter and the dice panel](docs/screenshot.jpg)
 
-Live (temporary, approved by Zach on 2026-10-15): https://hex-balance.vercel.app. Vercel project `zach-shirleys-projects/hex-balance`, deployed manually with `vercel deploy --prod`; no Git integration.
+Hex Balance is a browser recreation of a two-player balance game that Zach Shirley and a friend built in a high-school metalworking class. The board was a hexagonal steel plate resting on a square pipe across its middle. Each player owns the half on their side of the pipe, and you roll dice to add, move, merge and knock over stacks of steel pieces. Weight far from the pipe counts more. If the plate tips toward you, you lose. "Hex Balance" is a working title, because nobody remembers what the original was called.
 
-## Single player (added 2026-10-22)
+## How to play
 
-**Opponent** in the sidebar picks two players on one device or an Easy, Medium or Hard bot. Against a bot you play Red and move first; the bot plays Blue. The choice is saved per device, and switching starts a new game.
+- On your turn, roll two dice. Each die is one action, and you use them in any order:
+  - 1: spawn
+  - 2: move or jump
+  - 3: merge or split
+  - 4: strike
+  - 5: reinforce
+  - 6: wild
+- Doubles trigger combos. Some help (Stampede gives four moves). Some hurt (Snake eyes forces three spawns on your own edge).
+- Tap a highlighted stack to pick it up and see where it can go, or tap a spawn slot to spawn. The meter beside the board shows how close each side is to tipping, and hovering a move previews where the meter would land. Dice with no legal move are skipped automatically.
+- **Opponent:** two players on one device, or an Easy, Medium or Hard bot. Against a bot you play Red and move first.
+- **Online:** **Create online room** gives you an invite link for a friend on another device.
+- **Style:** Neon (default) or Forge.
+- **Settings and experiments:** plate mass, starting pieces, forced moves, three dice, overheating spawns, a hidden "breaking point" tower height, and a piece limit.
 
-The bot (`src/bot.ts`) plays through the same rules engine as people do. It tries the action sequences its dice allow and scores the board each one leaves. The score has four parts:
-- **Balance now:** the balance ratio, with a steep penalty near tipping toward itself.
-- **Future push:** how much torque each side's stacks can still add by advancing. A piece at your own edge has the most left to give, which is why spawning can be worth its immediate cost.
-- **Next-roll odds:** for every possible roll, including forced combos like snake eyes and supply drop, whether the next player can tip the board, or will be forced to tip it toward themselves.
-- **Material:** having pieces at all, with a penalty for having none, since then only spawn and wild dice do anything.
+The full rules and combo table are in the in-game **Rules** panel.
 
-Revised 2026-10-22 after Zach beat Medium by building one tall stack and marching it across while the bot never spawned. Testing used a scripted "rusher" opponent that plays that strategy.
-- **Easy** plays one die at a time, picks loosely (a random legal move about a third of the time), and only refuses moves that tip the board toward itself.
-- **Medium** plans the whole turn, with a little noise.
-- **Hard** plans the whole turn, then checks the shortlist against every possible opponent roll, with a greedy reply, and keeps the plan that holds up best.
-
-All three take a winning move when one exists and never tip the board toward themselves when they have another choice. None of them can see the hidden breaking-point limit; they assume 7. The bot thinks in a Web Worker, so the board keeps animating.
-
-Bot-vs-bot results after the 2026-10-22 revision (alternating colours; unfinished games hit the turn cap):
-- Default settings: Medium beat Easy 27-3, Hard beat Medium 20-9, new Medium beat the previous Medium 25-13, and new Hard beat the previous Hard 17-11.
-- Against the rusher: Medium won 30-7 (the previous Medium went 19-10), Hard won 23-6, and Easy lost 7-23.
-- Most remaining losses to the rusher come from combo swings (supply drop, stampede, jackpot), not slow play.
-
-Earlier numbers for the first version (three dice, breaking point and forced moves were not re-run after the revision):
-- Breaking point: Hard beat Medium 9-7.
-- Forced moves: Hard beat Easy 16-0.
-- Three dice: Hard beat Medium 6-5.
-
-The bot has about 2 seconds of thinking per move at most, to keep big combo turns from stalling. It has only been tuned against itself, not against people.
-
-## Online play
-
-Click **Create online room**: you play Red and get an invite link (`?join=CODE`) for Blue. The two browsers connect directly over WebRTC using PeerJS. Its free public server only introduces the peers, and its public relay servers carry traffic when a direct path is blocked. The host's browser holds the game state and rolls the dice; the guest sends intended actions, which the host checks before applying them on Blue's turn. A third device gets "room full". The host's game is saved in localStorage under the room code, so reloading `?host=CODE` resumes it and the guest reconnects automatically.
-
-Limits: there are no accounts and no server of our own, and the host must keep their tab open. The guest has to trust the host's dice. Two-tab tests on one machine pass, locally and on the live site; play between two different home networks has not been tested yet.
-
-## Run
+## Run locally
 
 ```bash
 npm install
 npm run dev     # http://127.0.0.1:5340
-npm test        # rules engine tests
+npm test        # rules and bot tests (Vitest)
 npm run build   # typecheck + production bundle
 ```
 
-## What came from the original game, and what was assumed
+## Deployment
+
+Hosted on Vercel at https://hex-balance.vercel.app. Pushes to `main` on GitHub deploy automatically (see the note at the end if that has not been connected yet). It is a static Vite build, with no backend of its own.
+
+## Verification
+
+**Automated tests:** 35 Vitest tests.
+- `tests/rules.test.ts` covers:
+  - board geometry and neighbours;
+  - the balance and tipping maths;
+  - every action type, combos, passing and forced dice;
+  - overheat, and the breaking point (one shared hidden limit; only growing a tower can break it).
+- `tests/bot.test.ts` checks that:
+  - each bot level plays only legal moves through whole games, including with experiments on;
+  - each bot takes a win when one is there;
+  - no bot tips the board toward itself when it has a safe choice;
+  - a bot with no pieces spawns instead of passing.
+
+**Simulations:**
+- The engine was fuzzed with about 87,000 random actions to check the breaking-point rule; it never let a tower stand above the limit.
+- The bots were checked with bot-vs-bot tournaments:
+
+| Matchup (default settings, alternating colours) | Result |
+| --- | --- |
+| Medium vs Easy | 27–3 |
+| Hard vs Medium | 20–9 |
+| Medium vs a scripted "rusher" (build one tall stack and march it across) | 30–7 |
+| Hard vs the rusher | 23–6 |
+
+**Checked by hand in a desktop browser:**
+- local play against each bot level;
+- the online room in two tabs, locally and on the live site;
+- the phone-width layout, in a 375 px emulated viewport.
+
+**Not tested:**
+- online play between two different home networks;
+- real phones and tablets (only emulated);
+- the bots against people other than Zach (Zach did beat an earlier Medium; that led to the current version);
+- the bots under three dice, breaking point and forced moves since the latest bot revision. In an earlier version, Hard's edge over Medium nearly disappeared with three dice (6–5).
+
+## Known limitations
+
+- The rules are a best-effort reconstruction. Die 4 (strike) is a guess, and the movement, spawning and starting-piece details are assumptions (see the table below).
+- **Online play** has no accounts and no server of its own. It uses PeerJS's free public servers, so it depends on their uptime. The host's tab must stay open, and the guest has to trust the host's dice.
+- **The bots** play Blue only. They are tuned against each other, not against people. On big combo turns they think for up to about 2 seconds.
+- Some chunks of the production bundle are over 500 kB. The archived 3D style (below) accounts for most of that, and it only loads if that style is enabled.
+
+## How it was built
+
+Zach described the original game from memory: the board, the pivot, the dice meanings and how the balance worked. He supplied a photo of the etched plate, from which the 52-cell layout was counted.
 
 | Element | Source |
 | --- | --- |
-| 52-cell board: 9 columns of 2, 5, 8, 7, 8, 7, 8, 5, 2 flat-top cells | Counted from Zach's photo of the etched plate |
+| 52-cell board: 9 columns of 2, 5, 8, 7, 8, 7, 8, 5, 2 flat-top cells | Counted from Zach's photo of the plate |
 | Pivot on a square pipe across the middle; tipping toward you loses | Zach's description |
 | Three spawn slots on each player's outer edge | Zach's description |
 | Roll two dice and use each one as an action | Zach's description |
@@ -64,70 +96,71 @@ npm run build   # typecheck + production bundle
 | 4 = strike (knock one piece off an adjacent enemy stack) | Zach's best guess; unconfirmed |
 | Enemy stacks on your spawn slots block spawning | Zach's description |
 | Move = one step, or jump over one adjacent stack | Assumed (combines the remembered "move" and "jump") |
-| Spawn may add to your own stack on a spawn slot | Assumed, so starting pieces don't make early 1s useless |
+| Spawn may add to your own stack on a spawn slot | Assumed |
 | One starting piece per spawn slot | Assumed |
-| Dice may be passed; used in any order | Assumed. Optional **Forced moves** setting (off by default): a die must be used if it has any legal move |
-| Tipping model and default weights | Assumed; see below |
+| Tipping model and default weights | Assumed; tuned by simulation (below) |
 
-## Locked rules (2026-10-15)
+From there, the game grew through rounds of Zach playing it and giving direction:
+- the angled 3D-style view;
+- online play so two devices could play;
+- shake as the plate nears tipping;
+- combos as a core rule, and merge/split on the 3;
+- the experiments;
+- two visual styles;
+- the single-player bots.
 
-- **Pipe half-width 0.5** (no longer a setting). Default plate mass lowered from 40 to 20 to keep games short at that width.
-- **Doubles combos are a core rule**: 11 Snake eyes (three forced spawns), 22 Stampede (four moves), 33 Weld (two merge/splits and two moves), 44 Convert (take over an adjacent enemy stack of up to 3), 55 Supply drop (three forced reinforcements), 66 Jackpot (two wilds and a bonus roll). A pair is any two matching dice in the roll. Combos apply on bonus rolls, but a bonus roll never earns another roll.
-- **3 is Merge / split**: merge two adjacent stacks fully, or split half a stack (rounded down) onto an adjacent empty cell. When a picked-up stack can both move and split onto the same tiles, a toggle chooses which.
-- **Online**: only the host changes settings or starts a new game; the guest sees settings read-only.
+**Locked rules (2026-10-15):**
+- Pipe half-width 0.5 and plate mass 20.
+- Doubles combos are core: 11 Snake eyes, 22 Stampede, 33 Weld, 44 Convert, 55 Supply drop, 66 Jackpot.
+- 3 is merge or split.
+- Online, only the host changes settings.
 
-## Themes and experiments
-
-Two styles, chosen per device in the **Style** panel: **Neon** (default; glowing edges, coloured player rims) and **Forge** (riveted, rusted iron).
-
-**Archived (2026-10-19): Foundry.** No longer offered in the Style panel; its code is kept for revival (`src/scene3d.ts`, the Foundry branch in `src/main.ts`, git tag `foundry-archive`).
-
-**Foundry** is a real-time 3D arena (`src/scene3d.ts`, Three.js, loaded only when this style is chosen) seen from behind your side, Clash Royale style: a dark stainless plate with bronze-rimmed wells on a bronze pivot beam and pedestals, grounded on a steel floor, with a molten forge pit at each end (Red runs orange, Blue runs white-blue). Pieces are polished steel with glowing owner-coloured bands; they rise out of their owner's pit when spawned, take a drop hammer for reinforce and strike, are lifted for moves, arc-weld on merge, get torch-cut on split, and glow red-hot then cool. Losing tips the plate and dumps every stack into the loser's pit. The HUD has forge nameplates, the dice console on the left, the balance gauge on the right, stamped combo titles and a menu drawer. The presses beside each pit and the hall are placeholders awaiting approval before detailed modelling.
-
-Experiments in **Settings and experiments** (off by default, saved with the game so both online players share them):
-
-- **Three dice**: roll three a turn; three of a kind is a triple combo (111 Cave-in: five forced spawns; 666 Mother lode: pick any double combo and roll again; the others are the double plus a wild and a bonus roll).
-- **Overheating spawns**: each spawn heats its slot; at 3 heat the slot locks for the owner's next 2 turns, otherwise it cools by one each of their turns.
-- **Breaking point**: one hidden tower height limit (5-12) for the whole board. A tower that grows past it (reinforce, spawn onto it, merge into it) punches through and leaves a permanent hole; reaching the limit exactly is safe and moving never breaks a tower. A new hidden limit is rolled after each breakthrough. (Changed 2026-10-19 from per-tile limits, which read as inconsistent.)
-- **Piece limit**: cap on pieces per player on the board.
-
-Greedy-bot check after locking the pipe (200 games each, cap 150 rounds):
-
-| Mode | Games ended | Median rounds |
-| --- | --- | --- |
-| Mass 40 | 100 | stalls |
-| Mass 30 | 140 | 22 |
-| Mass 20 (default) | 172 | 14 |
-| Mass 40 + breaking point | 200 | 23 |
-| Mass 40 + overheat | 108 | 58 |
-
-## Weight model
-
-Each piece weighs 1. A stack's torque is its piece count × its distance from the pipe in cell heights; Red's half is negative and Blue's is positive. The plate rests on the flat top of a square pipe, so it tips once the combined centre of mass passes the pipe's edge:
+**Weight model:** each piece weighs 1, and a stack's torque is its piece count times its distance from the pipe in cell heights. The plate rests on the flat top of a square pipe, so it tips once the combined centre of mass passes the pipe's edge:
 
 ```
 |Σ pieces × distance|  ≥  pipeHalfWidth × (plateMass + total pieces)
 ```
 
-A rough physical estimate (3 cm cells, 1 cm plate, 0.5 cm pieces, 1-inch pipe) gives a plate of ~145 piece-weights and a half-width of ~0.42 cell heights. In greedy-bot playtests (120 games per setting, capped at 150 rounds), that weight almost never ended: both sides keep cancelling each other's torque.
+A physical estimate of the real plate (about 145 piece-weights, half-width about 0.42) almost never produced a finished game in greedy-bot playtests, because the two sides kept cancelling each other out. The lighter plate keeps games to around 14 rounds; at mass 20, 86% of greedy-bot games finished.
 
-| Plate mass / pipe half-width | Games that ended | Median rounds |
-| --- | --- | --- |
-| 120 / 0.35 | 15 / 120 | did not end |
-| 60 / 0.25 | 99 / 120 | 34 |
-| 40 / 0.25 (default) | 116 / 120 | 19 |
+**The bots** (`src/bot.ts`) play through the same rules engine as people. They try the action sequences their dice allow and score each resulting board on four things:
+- the balance now;
+- how much push each side's pieces still have as they advance;
+- the odds, over every possible next roll (including forced combos), that someone can tip the board;
+- having pieces in play at all.
 
-These values can be changed in the in-game **Weight settings** panel.
+Easy plays one die at a time and is often random. Medium plans its whole turn. Hard also checks every possible opponent reply roll. The bots run in a Web Worker so the board keeps animating.
+
+**Archived style:** a 3D "Foundry" arena (Three.js) was built and then archived on 2026-10-19. Its code is kept in `src/scene3d.ts` and at git tag `foundry-archive`.
 
 ## Code
 
 - `src/board.ts`: board geometry, neighbours, spawn slots, lever arms
-- `src/rules.ts`: game state, legal actions, dice, balance and tipping (pure, no DOM)
-- `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks (camera 50 degrees above the near edge; lean rotates the plate about the pipe)
+- `src/rules.ts`: game state, legal actions, dice, combos, balance and tipping (pure, no DOM)
+- `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks
+- `src/bot.ts`, `src/botWorker.ts`: single-player bots and the worker they run in
 - `src/net.ts`: PeerJS host/guest sessions
-- `src/bot.ts`, `src/botWorker.ts`: single-player bot and the worker it runs in
-- `src/main.ts`, `src/style.css`: UI, dice panel, balance meter, lean and tip animation, online panel
-- `tests/rules.test.ts`: geometry, balance and action tests
-- `tests/bot.test.ts`: bots only play legal moves through whole games, take wins, avoid self-tips
+- `src/main.ts`, `src/style.css`: UI, dice panel, balance meter, animation, panels
+- `src/scene3d.ts`: archived 3D style
 
-Built with AI assistance (Claude Code) under Zach's direction; Zach supplied the original game, board photo and rule recollections.
+## AI assistance and Zach's role
+
+The code was written with an AI coding agent (Claude Code). Zach's part:
+- He supplied the original game, the board photo and the rule recollections.
+- He made the design calls: the pipe width, combos as core, which experiments to try, the visual direction, and archiving the 3D style.
+- He playtested and reported problems. The breaking point felt inconsistent, the board vanished, and the Medium bot never spawned and lost to a tall-stack rush. Each report led to a fix.
+
+The agent did the implementation, the tests, the simulations and the bot tuning.
+
+## Attribution
+
+- Fonts are loaded from Google Fonts, under their open licenses.
+- Libraries:
+  - PeerJS (MIT) for online play;
+  - Three.js (MIT) for the archived 3D style;
+  - Vite, TypeScript and Vitest for building and testing.
+- No third-party art assets are used.
+
+## License
+
+No license yet. All rights reserved; the source is public to read.
