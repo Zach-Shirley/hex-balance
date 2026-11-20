@@ -35,8 +35,7 @@ import {
   type Player,
   type Settings,
 } from './rules';
-import { renderBoard, type Theme } from './view3d';
-import type { Foundry3D } from './scene3d';
+import { renderBoard } from './view3d';
 import { GuestSession, HostSession, newRoomCode, type Intent, type NetStatus } from './net';
 import { BOT_LEVELS, BOT_NAMES, botIntent, type BotLevel } from './bot';
 
@@ -91,38 +90,6 @@ function saveOpponent(next: BotLevel | null) {
   } catch {
     // preference lasts for this visit only
   }
-}
-
-/** Visual theme; a per-device preference, not part of the game state. */
-let theme: Theme = loadTheme();
-
-function loadTheme(): Theme {
-  try {
-    const saved = localStorage.getItem('hex-balance-theme');
-    // Foundry is archived (code kept, not offered): a saved 'foundry' choice falls back to Neon.
-    return saved === 'forge' ? 'forge' : 'neon';
-  } catch {
-    return 'neon';
-  }
-}
-
-/** Foundry builds on Forge's board styling, so it sets data-theme="forge" plus a variant. */
-function applyThemeAttributes() {
-  document.documentElement.dataset.theme = theme === 'foundry' ? 'forge' : theme;
-  document.documentElement.dataset.variant = theme === 'foundry' ? 'foundry' : '';
-  scene3d?.setActive(theme === 'foundry');
-}
-
-function setTheme(next: Theme) {
-  theme = next;
-  scene3d?.clear();
-  try {
-    localStorage.setItem('hex-balance-theme', next);
-  } catch {
-    // preference lasts for this visit only
-  }
-  applyThemeAttributes();
-  render();
 }
 
 /** Single player: the bot plays Blue and you play Red. Off online, where a person is the opponent. */
@@ -522,21 +489,6 @@ function drawBoard() {
 }
 
 function drawBoardUnsafe() {
-  if (theme === 'foundry') {
-    const hints = boardHints();
-    if (!scene3d) return void loadScene();
-    scene3d.update({
-      stacks: state.stacks,
-      holes: new Set(state.holes ?? []),
-      heat: state.settings.overheat ? new Map(Object.entries(state.heat ?? {}).map(([k, v]) => [Number(k), v])) : new Map(),
-      lean: shownLean + shakeLean,
-      yaw: viewYaw,
-      sources: hints.sources,
-      targets: hints.targets,
-      from: selected,
-    });
-    return;
-  }
   const host = app.querySelector<HTMLElement>('.board-host');
   if (!host) return;
   const hints = boardHints();
@@ -547,7 +499,6 @@ function drawBoardUnsafe() {
     heat: state.settings.overheat ? new Map(Object.entries(state.heat ?? {}).map(([k, v]) => [Number(k), v])) : new Map(),
     lean: shownLean + shakeLean,
     yaw: viewYaw,
-    theme,
     sources: hints.sources,
     targets: hints.targets,
     from: selected,
@@ -757,33 +708,63 @@ function meterPos(ratio: number): number {
   return 50 - towardFar * 50;
 }
 
-function balanceStatus(): string {
+/** Who a colour is, in words: you, the bot, or the colour name. */
+function sideName(p: Player): string {
+  if (botColor() === p) return `${BOT_NAMES[opponent!]} bot`;
+  if (myColor() === p) return 'You';
+  return playerName(p);
+}
+
+/** One line above the board: the turn, which way the plate leans, and the raw torque. */
+function statusLine(): string {
   const b = balance(state);
-  const leader = Math.abs(b.ratio) < 0.02 ? null : b.ratio > 0 ? 'red' : 'blue';
-  const sinking = leader ? other(leader) : null;
-  const status = state.loser
-    ? `The board tipped toward <strong class="c-${state.loser}">${playerName(state.loser)}</strong>`
-    : leader
-      ? `<strong class="c-${leader}">${playerName(leader)}</strong> is winning: ${playerName(sinking!)}'s side is ${Math.round(Math.abs(b.ratio) * 100)}% of the way to tipping`
+  const pct = Math.round(Math.abs(b.ratio) * 100);
+  const sinking = Math.abs(b.ratio) < 0.02 ? null : b.ratio > 0 ? 'blue' : 'red';
+  const lean = state.loser
+    ? `Tipped toward <strong class="c-${state.loser}">${playerName(state.loser)}</strong>`
+    : sinking
+      ? `Leaning toward <strong class="c-${sinking}">${playerName(sinking)}</strong> · ${pct}%`
       : 'Level';
-  return `<div class="balance">
-    <div class="balance-status">${status}</div>
-    <div class="balance-meta">Torque ${b.torque.toFixed(1)} of ${b.threshold.toFixed(1)} · ${b.totalPieces} pieces on the board</div>
+  const turn = state.phase === 'over' ? 'Game over' : `Turn ${state.turnNumber}`;
+  return `<div class="status">
+    <span class="status-turn">${turn}</span>
+    <span class="status-lean">${lean}</span>
+    <span class="status-meta" title="Torque now, out of the torque that tips the plate; pieces on the board">τ ${b.torque.toFixed(1)} / ${b.threshold.toFixed(1)} · ${b.totalPieces} pcs</span>
   </div>`;
 }
 
-/** Vertical meter beside the board, oriented like the board: each player's end sits on their side. */
+/** A player's plate beside their edge of the board: who they are, pieces in play, and how close their side is to tipping. */
+function playerChip(p: Player): string {
+  const b = balance(state);
+  const sinking = b.ratio > 0 ? 'blue' : b.ratio < 0 ? 'red' : null;
+  const risk = sinking === p ? Math.min(100, Math.round(Math.abs(b.ratio) * 100)) : 0;
+  const pieces = state.stacks.reduce((n, st) => n + (st?.owner === p ? st.count : 0), 0);
+  const active = state.phase !== 'over' && state.turn === p;
+  const name = sideName(p);
+  return `<div class="pchip p-${p} ${active ? 'active' : ''} ${state.loser === p ? 'lost' : ''}">
+    <span class="pchip-hex"></span>
+    <span class="pchip-name">${name}${name === playerName(p) ? '' : ` <small>${playerName(p)}</small>`}</span>
+    <span class="pchip-turn">${active ? (state.phase === 'roll' ? 'to roll' : 'playing') : ''}</span>
+    <span class="pchip-stat" title="Pieces on the board"><b>${pieces}</b> pcs</span>
+    <span class="pchip-risk ${risk >= 80 ? 'hot' : ''}" title="How close the plate is to tipping toward this side"><i style="width:${risk}%"></i><b>${risk}%</b></span>
+  </div>`;
+}
+
+/** Vertical gauge beside the board, oriented like the board: each player's end sits on their side. */
 function meter(far: Player, near: Player): string {
-  const pos = meterPos(balance(state).ratio);
-  return `<div class="meter" aria-label="Balance meter">
-    <span class="meter-label c-${far}">${playerName(far)}<br />wins</span>
-    <div class="meter-track" style="background: linear-gradient(180deg, var(--${far}) 0%, rgba(255, 255, 255, 0.06) 50%, var(--${near}) 100%)">
+  const ratio = balance(state).ratio;
+  const pos = meterPos(ratio);
+  const pct = Math.round(Math.min(1, Math.abs(ratio)) * 100);
+  return `<div class="meter" aria-label="Balance gauge">
+    <span class="meter-cap c-${far}">${playerName(far)}<br />wins</span>
+    <div class="meter-track" style="--far: var(--${far}); --near: var(--${near})">
       <div class="meter-danger top"></div><div class="meter-danger bottom"></div>
+      <div class="meter-ticks"></div>
       <div class="meter-center"></div>
       <div class="meter-ghost" style="top:${pos}%"></div>
-      <div class="meter-marker" style="top:${pos}%"></div>
+      <div class="meter-marker ${pct >= 80 ? 'hot' : ''}" style="top:${pos}%"><span>${pct}</span></div>
     </div>
-    <span class="meter-label c-${near}">${playerName(near)}<br />wins</span>
+    <span class="meter-cap c-${near}">${playerName(near)}<br />wins</span>
   </div>`;
 }
 
@@ -812,15 +793,6 @@ function onlinePanel(): string {
         : ''
     }
     <button class="ghost-btn wide" data-act="leave">Leave online game</button>
-  </div>`;
-}
-
-function themePanel(): string {
-  const opt = (id: Theme, name: string, blurb: string) =>
-    `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
-  return `<div class="panel theme-panel">
-    <h3>Style</h3>
-    <div class="theme-row">${opt('neon', 'Neon', 'Glowing edges, arcade night')}${opt('forge', 'Forge', 'Riveted iron, 1880s mill')}</div>
   </div>`;
 }
 
@@ -860,16 +832,26 @@ function readSettingsForm(): Settings {
 
 // ---------- Start menu ----------
 
+const LOGO = `<svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+  <defs>
+    <linearGradient id="lg-r" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff95a1" /><stop offset="1" stop-color="#b8162d" /></linearGradient>
+    <linearGradient id="lg-b" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8d6ff" /><stop offset="1" stop-color="#1b52a6" /></linearGradient>
+  </defs>
+  <path d="M13 5h22l11 17H2z" fill="url(#lg-r)" /><path d="M2 26h44L35 43H13z" fill="url(#lg-b)" />
+  <rect x="0" y="22.5" width="48" height="3" rx="1.5" fill="#f1ecef" />
+</svg>`;
+
 function titleView(): string {
   const resume = gameInProgress() ? '<button class="ghost-btn menu-wide" data-act="resume">Continue current game</button>' : '';
   return `<div class="menu-screen title-screen">
     <div class="menu-hexes" aria-hidden="true"></div>
     <div class="title-inner">
-      <div class="title-mark" aria-hidden="true"><span class="tm-red"></span><span class="tm-pipe"></span><span class="tm-blue"></span></div>
-      <h1 class="title-name">Hex Balance</h1>
+      <div class="title-mark">${LOGO}</div>
+      <h1 class="title-name">Hex<br />Balance</h1>
       <p class="title-tag">Load the steel plate. Tip it toward your rival before it tips toward you.</p>
-      <button class="roll-btn menu-wide title-start" data-act="to-setup">Start game</button>
+      <button class="cta-btn menu-wide title-start" data-act="to-setup">Start game</button>
       ${resume}
+      <p class="title-foot">Two players · dice · torque</p>
     </div>
   </div>`;
 }
@@ -877,8 +859,6 @@ function titleView(): string {
 function setupView(): string {
   const opp = (id: BotLevel | null, name: string, blurb: string) =>
     `<button class="theme-opt ${setupOpponent === id ? 'active' : ''}" data-opponent="${id ?? 'local'}"><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
-  const style = (id: Theme, name: string, blurb: string) =>
-    `<button class="theme-opt ${theme === id ? 'active' : ''}" data-theme-pick="${id}"><span class="swatch swatch-${id}"></span><span><strong>${name}</strong><small>${blurb}</small></span></button>`;
   return `<div class="menu-screen setup-screen">
     <div class="setup-card">
       <header class="setup-head">
@@ -895,15 +875,11 @@ function setupView(): string {
         </div>
         <p class="muted">${setupOpponent ? 'You play <strong class="c-red">Red</strong> and move first; the bot plays <strong class="c-blue">Blue</strong>.' : 'Red moves first. Hand the device over each turn.'}</p>
       </section>
-      <section class="setup-section">
-        <h3>Style</h3>
-        <div class="theme-row">${style('neon', 'Neon', 'Glowing edges, arcade night')}${style('forge', 'Forge', 'Riveted iron, 1880s mill')}</div>
-      </section>
       <details class="setup-section settings" ${rulesOpen ? 'open' : ''}>
         <summary>Rules and experiments</summary>
         ${settingsFields()}
       </details>
-      <button class="roll-btn menu-wide" data-act="start">Start game</button>
+      <button class="cta-btn menu-wide" data-act="start">Start game</button>
       <section class="setup-section setup-online">
         <h3>Play a friend online</h3>
         <p class="muted">Opens a room with these rules: you are Red and get a link to send; your friend plays Blue on their device.</p>
@@ -958,34 +934,49 @@ function resultCard(): string {
   const winner = other(state.loser!);
   const me = myColor();
   const title = me ? (winner === me ? 'You win' : 'You lose') : `${playerName(winner)} wins`;
-  return `<div class="result"><div class="result-card"><h2 class="c-${winner}">${title}</h2><p>The board tipped toward ${playerName(state.loser!)}.</p>${
-    online.mode === 'guest' ? '<p class="muted">Waiting for the host to start a new game.</p>' : `<button class="roll-btn turn-${winner}" data-act="new">Play again</button>`
-  }</div></div>`;
+  const again =
+    online.mode === 'guest'
+      ? '<p class="muted">Waiting for the host to start a new game.</p>'
+      : `<button class="cta-btn" data-act="new">Play again</button>${online.mode === 'local' ? '<button class="ghost-btn" data-act="to-title">Menu</button>' : ''}`;
+  return `<div class="result"><div class="result-card win-${winner}">
+    <div class="result-kicker">Tipped over · turn ${state.turnNumber}</div>
+    <h2 class="c-${winner}">${title}</h2>
+    <p>The plate tipped toward ${playerName(state.loser!)}, and every stack on it went with it.</p>
+    <div class="result-actions">${again}</div>
+  </div></div>`;
 }
+
+const ICON_ROTATE = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.6-5.9M20 4v5h-5" /></svg>';
+const ICON_MENU = '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>';
 
 function render() {
   if (screen !== 'game') return menuRender();
-  if (theme === 'foundry') return renderFoundry();
   const far: Player = flipped() ? 'blue' : 'red';
   const near = other(far);
-  const turnText = state.phase === 'over' ? 'Game over' : `Turn ${state.turnNumber} · <strong>${myColor() && state.turn === myColor() ? 'You' : playerName(state.turn)}</strong>`;
+  const corner =
+    online.mode === 'local'
+      ? `<button class="ghost-btn" data-act="to-title" title="Back to the menu">${ICON_MENU}<span class="long">Menu</span></button>`
+      : online.mode === 'host'
+        ? '<button class="ghost-btn" data-act="new">New<span class="long"> game</span></button>'
+        : '';
 
   app.innerHTML = `
     <header class="top">
-      <h1>Hex Balance</h1>
-      <div class="turn turn-${state.turn}">${turnText}</div>
-      <button class="ghost-btn" data-act="rotate" title="Turn the board around">Rotate<span class="long"> view</span></button>
-      ${online.mode === 'local' ? '<button class="ghost-btn" data-act="to-title">Menu</button>' : online.mode === 'host' ? '<button class="ghost-btn" data-act="new">New<span class="long"> game</span></button>' : ''}
+      <div class="brand">${LOGO}<span>Hex Balance</span></div>
+      <div class="top-actions">
+        <button class="ghost-btn" data-act="rotate" title="Turn the board around">${ICON_ROTATE}<span class="long">Rotate</span></button>
+        ${corner}
+      </div>
     </header>
-    ${balanceStatus()}
     <main class="layout">
       <section class="stage">
-        <div class="side-label c-${far}">${playerName(far)} side</div>
+        ${statusLine()}
+        ${playerChip(far)}
         <div class="stage-row">
           <div class="tilt"><div class="board-host"></div></div>
           ${meter(far, near)}
         </div>
-        <div class="side-label c-${near}">${playerName(near)} side</div>
+        ${playerChip(near)}
         ${resultCard()}
       </section>
       <aside class="sidebar">
@@ -993,7 +984,6 @@ function render() {
           ${dicePanel()}
           <p class="hint">${hint()}</p>
         </div>
-        ${opponent && online.mode === 'local' ? `<p class="vs-line muted">Playing the <strong>${BOT_NAMES[opponent].toLowerCase()} bot</strong> · change it from the Menu</p>` : ''}
         ${onlinePanel()}
         <div class="panel log"><h3>Log</h3><ol>${state.log
           .slice(-14)
@@ -1022,24 +1012,6 @@ app.addEventListener('click', (event) => {
     return dispatch({ type: 'new' });
   }
   if (act === 'rotate') return rotateView();
-  const pick = el.closest<HTMLElement>('[data-theme-pick]')?.dataset.themePick;
-  if (pick === 'neon' || pick === 'forge') return setTheme(pick);
-  if (act === 'menu') {
-    menuOpen = !menuOpen;
-    return render();
-  }
-  if (act === 'title-local') {
-    showTitle = false;
-    return render();
-  }
-  if (act === 'title-online') {
-    showTitle = false;
-    return startHost();
-  }
-  if (act === 'title-classic') {
-    showTitle = false;
-    return setTheme('neon');
-  }
   const opp = el.closest<HTMLElement>('[data-opponent]')?.dataset.opponent;
   if (opp) {
     setupOpponent = BOT_LEVELS.includes(opp as BotLevel) ? (opp as BotLevel) : null;
@@ -1151,171 +1123,34 @@ window.addEventListener('keydown', (event) => {
   }
 });
 
-// ---------- Foundry ----------
+// ---------- Callouts ----------
 
-/** The 3D arena lives outside #app so re-rendering the HUD never rebuilds it. */
-const sceneHost = document.createElement('div');
-sceneHost.className = 'fd3';
+/** Stamped callouts over the board for combos, breakthroughs and overheats. Outside #app so re-rendering never cuts one short. */
 const slamLayer = document.createElement('div');
-slamLayer.className = 'fd-slam';
-document.body.prepend(sceneHost);
+slamLayer.className = 'slam-layer';
 document.body.append(slamLayer);
-let scene3d: Foundry3D | null = null;
-let sceneLoading = false;
 
-/** Three.js is only downloaded when the Foundry style is in use. */
-function loadScene() {
-  if (sceneLoading) return;
-  sceneLoading = true;
-  import('./scene3d').then(({ Foundry3D }) => {
-    scene3d = new Foundry3D(sceneHost, {
-      onTap: (id) => {
-        if (id !== null) return onCellTap(id);
-        if (selected !== null) {
-          selected = null;
-          render();
-        }
-      },
-      onHover: (id) => previewCell(id),
-    });
-    scene3d.setActive(theme === 'foundry');
-    drawBoard();
-  });
-}
-
-let menuOpen = false;
-let showTitle = theme === 'foundry';
-
-/** A big stamped title across the screen (combos, breakthroughs, overheats). */
 function slam(title: string, sub: string, tone: string) {
-  if (theme !== 'foundry') return;
+  if (screen !== 'game') return;
   const el = document.createElement('div');
   el.className = `slam slam-${tone}`;
   el.innerHTML = `<strong>${title}</strong>${sub ? `<span>${sub}</span>` : ''}`;
-  slamLayer.append(el);
+  slamLayer.replaceChildren(el);
   setTimeout(() => el.remove(), 1900);
 }
 
 /** Called with the old and new state on every change, local or from the network. */
 function transition(prev: GameState, next: GameState) {
-  if (theme !== 'foundry') return;
-  if (next.log.length < prev.log.length || (next.log.length === 1 && prev.log.length > 1)) {
-    scene3d?.clear(); // new game
-    return;
-  }
-  scene3d?.play(prev, next);
-  if (next.combo && next.combo !== prev.combo && next.combo.name !== prev.combo?.name) slam(next.combo.name, next.combo.text, next.combo.tone);
-  if (next.event && next.event !== prev.event) {
-    const broke = /broke through/.test(next.event);
-    slam(broke ? 'Breakthrough!' : 'Overheated!', next.event, 'bad');
-    if (broke) scene3d?.flare();
-  }
-  if (next.phase === 'over' && prev.phase !== 'over') {
-    setTimeout(() => scene3d?.flare(3200), 900);
-    setTimeout(() => slam('Meltdown', '', 'bad'), 1100);
-  }
+  if (next.combo && next.combo.name !== prev.combo?.name) slam(next.combo.name, next.combo.text, next.combo.tone);
+  else if (next.event && next.event !== prev.event) slam(/broke through/.test(next.event) ? 'Breakthrough' : 'Overheated', '', 'bad');
 }
-
-const FORGE_NAME: Record<Player, string> = { red: 'Red Furnace', blue: 'Blue Quench' };
-
-function forgePlate(p: Player): string {
-  const b = balance(state);
-  const sinking = b.ratio > 0 ? 'blue' : b.ratio < 0 ? 'red' : null;
-  const danger = sinking === p ? Math.min(100, Math.round(Math.abs(b.ratio) * 100)) : 0;
-  const pieces = state.stacks.reduce((n, s) => n + (s?.owner === p ? s.count : 0), 0);
-  const active = state.phase !== 'over' && state.turn === p;
-  const you = myColor() === p ? ' · you' : '';
-  return `<div class="fd-plate fd-${p} ${active ? 'active' : ''}">
-    <span class="fd-name">${FORGE_NAME[p]}</span>
-    <span class="fd-meta">${pieces} pieces on the plate${you}</span>
-    <span class="fd-danger" title="How close the plate is to tipping toward this side"><i style="width:${danger}%"></i></span>
-  </div>`;
-}
-
-function foundryResult(): string {
-  if (state.phase !== 'over') return '';
-  const winner = other(state.loser!);
-  const me = myColor();
-  const title = me ? (winner === me ? 'Victory' : 'Defeat') : `${FORGE_NAME[winner]} wins`;
-  return `<div class="fd-result"><div class="fd-result-card">
-    <div class="fd-kicker">Meltdown</div>
-    <h2 class="c-${winner}">${title}</h2>
-    <p>The plate tipped and dumped everything into ${FORGE_NAME[state.loser!]}'s forge pit.</p>
-    ${online.mode === 'guest' ? '<p class="fd-wait">Waiting for the host to fire up a new duel.</p>' : '<button class="fd-btn fd-btn-hot" data-act="new">Fire up a new duel</button>'}
-  </div></div>`;
-}
-
-function titleScreen(): string {
-  return `<div class="fd-title">
-    <div class="fd-title-inner">
-      <div class="fd-title-kicker">Foundry duel</div>
-      <h1>Hex Balance</h1>
-      <p>Load the plate. Tip it toward your rival. Whoever's side goes into the crucible loses everything.</p>
-      <div class="fd-title-buttons">
-        <button class="fd-btn fd-btn-hot" data-act="title-local">Local duel</button>
-        <button class="fd-btn" data-act="title-online">Online duel</button>
-        <button class="fd-btn fd-btn-ghost" data-act="title-classic">Classic style</button>
-      </div>
-    </div>
-  </div>`;
-}
-
-function renderFoundry() {
-  const far: Player = flipped() ? 'blue' : 'red';
-  const near = other(far);
-  const b = balance(state);
-  const status = state.loser
-    ? `Plate tipped toward ${FORGE_NAME[state.loser]}`
-    : Math.abs(b.ratio) < 0.02
-      ? 'Plate level'
-      : `${FORGE_NAME[b.ratio > 0 ? 'blue' : 'red']} side at ${Math.round(Math.abs(b.ratio) * 100)}% of tipping`;
-  const who = state.phase === 'over' ? 'Duel over' : myColor() && state.turn === myColor() ? 'Your shift' : `${FORGE_NAME[state.turn]}'s shift`;
-
-  app.innerHTML = `
-    <div class="fd">
-      <header class="fd-hud">
-        ${forgePlate('red')}
-        <div class="fd-mid">
-          <div class="fd-shift">Shift ${state.turnNumber}</div>
-          <div class="fd-who c-${state.turn}">${who}</div>
-          <div class="fd-status">${status}</div>
-        </div>
-        ${forgePlate('blue')}
-      </header>
-      <div class="fd-tools">
-        <button class="fd-icon" data-act="rotate" title="Rotate the plate">⟲</button>
-        <button class="fd-icon" data-act="menu" title="Menu">☰</button>
-      </div>
-      <div class="fd-gauge">${meter(far, near)}</div>
-      <footer class="fd-console actions-panel turn-${state.turn}">
-        ${dicePanel()}
-        <p class="hint">${hint()}</p>
-      </footer>
-      ${foundryResult()}
-      <aside class="fd-drawer ${menuOpen ? 'open' : ''}">
-        <div class="fd-drawer-head"><h2>Foundry office</h2><button class="fd-icon" data-act="menu" title="Close">✕</button></div>
-        ${online.mode === 'guest' ? '' : '<button class="fd-btn fd-btn-hot wide" data-act="new">New duel</button>'}
-        ${themePanel()}
-        ${onlinePanel()}
-
-        ${rulesPanel()}
-        <div class="panel log"><h3>Shift log</h3><ol>${state.log
-          .slice(-30)
-          .reverse()
-          .map((l) => `<li>${l}</li>`)
-          .join('')}</ol></div>
-      </aside>
-      ${showTitle && online.mode === 'local' ? titleScreen() : ''}
-    </div>`;
-  drawBoard();
-  animateLean();
-  updateShake();
-  scheduleAutoPass();
-}
-
-applyThemeAttributes();
 
 // ---------- Boot ----------
+
+// Development only: lets browser checks read the game and set up positions.
+if (import.meta.env.DEV) {
+  Object.assign(window, { __hex: { get state() { return state; }, setState, dispatch } });
+}
 
 const params = new URLSearchParams(location.search);
 const joinCode = params.get('join')?.toUpperCase();

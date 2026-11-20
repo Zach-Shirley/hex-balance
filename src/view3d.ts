@@ -91,127 +91,12 @@ export function project([x, y, z]: V3, cam: Camera, leans = true): { p: V2; dept
 
 const fmt = (pts: V2[]) => pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
 
-export type Theme = 'neon' | 'forge' | 'foundry';
 type RGB = [number, number, number];
 
-interface Palette {
-  metal: RGB; // pipe and stands
-  plateSide: RGB;
-  pieceSide: RGB;
-  plateStops: [string, string, string];
-  steelStops: [string, string, string];
-}
-
-const PALETTES: Record<Theme, Palette> = {
-  // Dark gunmetal so the glowing edges carry the look.
-  neon: {
-    metal: [74, 82, 98],
-    plateSide: [38, 42, 54],
-    pieceSide: [150, 160, 178],
-    plateStops: ['#262a34', '#191c23', '#101217'],
-    steelStops: ['#dfe7f2', '#93a0b2', '#5a6475'],
-  },
-  // Warm wrought iron and worn steel.
-  forge: {
-    metal: [80, 74, 68],
-    plateSide: [82, 74, 64],
-    pieceSide: [172, 160, 142],
-    plateStops: ['#4d4842', '#35312c', '#221f1b'],
-    steelStops: ['#ece3d2', '#b6a991', '#7c6e5a'],
-  },
-  // Heat-blued tool steel lit from below by the crucible.
-  foundry: {
-    metal: [70, 60, 56],
-    plateSide: [58, 44, 38],
-    pieceSide: [150, 140, 132],
-    plateStops: ['#3b3230', '#241c1a', '#140f0e'],
-    steelStops: ['#e9e2da', '#a59c94', '#5c524c'],
-  },
-};
-
-/** A small tile of grain noise for the forge plate, generated once in the browser. */
-let grainUrl: string | null = null;
-function grain(): string {
-  if (grainUrl !== null) return grainUrl;
-  grainUrl = '';
-  try {
-    const c = document.createElement('canvas');
-    c.width = c.height = 96;
-    const ctx = c.getContext('2d')!;
-    const img = ctx.createImageData(96, 96);
-    for (let i = 0; i < img.data.length; i += 4) {
-      const v = Math.random() < 0.5 ? 0 : 255;
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
-      img.data[i + 3] = Math.floor(Math.random() * 38);
-    }
-    ctx.putImageData(img, 0, 0);
-    grainUrl = c.toDataURL();
-  } catch {
-    // no canvas (tests); the plate just renders without grain
-  }
-  return grainUrl;
-}
-
-/** Rust blotches, drips and pitting for forge metal, generated once in the browser. */
-let rustUrl: string | null = null;
-function rust(): string {
-  if (rustUrl !== null) return rustUrl;
-  rustUrl = '';
-  try {
-    const n = 160;
-    const c = document.createElement('canvas');
-    c.width = c.height = n;
-    const ctx = c.getContext('2d')!;
-    const tones = ['118,58,24', '92,48,24', '140,78,34', '60,36,22', '30,24,20'];
-    // Wrap blotches across edges so the tile repeats without seams.
-    const blot = (x: number, y: number, r: number, color: string, a: number) => {
-      for (const dx of [-n, 0, n]) {
-        for (const dy of [-n, 0, n]) {
-          const g = ctx.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
-          g.addColorStop(0, `rgba(${color},${a})`);
-          g.addColorStop(1, `rgba(${color},0)`);
-          ctx.fillStyle = g;
-          ctx.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
-        }
-      }
-    };
-    for (let i = 0; i < 26; i++) blot(Math.random() * n, Math.random() * n, 8 + Math.random() * 30, tones[i % tones.length], 0.18 + Math.random() * 0.35);
-    // Drips running down.
-    for (let i = 0; i < 14; i++) {
-      const x = Math.random() * n;
-      const y = Math.random() * n;
-      const len = 12 + Math.random() * 40;
-      const g = ctx.createLinearGradient(x, y, x, y + len);
-      g.addColorStop(0, 'rgba(110,56,24,0.45)');
-      g.addColorStop(1, 'rgba(110,56,24,0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x, y, 1 + Math.random() * 2, len);
-    }
-    // Pitting.
-    for (let i = 0; i < 900; i++) {
-      ctx.fillStyle = Math.random() < 0.7 ? `rgba(20,14,10,${0.2 + Math.random() * 0.4})` : `rgba(210,190,160,${0.1 + Math.random() * 0.2})`;
-      ctx.fillRect(Math.random() * n, Math.random() * n, 1, 1);
-    }
-    rustUrl = c.toDataURL();
-  } catch {
-    // no canvas (tests); metal renders clean
-  }
-  return rustUrl;
-}
-
-/** Texture and shading defs shared by both forge layers (ids are suffixed per layer). */
-function forgeDefs(suffix: string): string {
-  const g = grain();
-  const r = rust();
-  return `${g ? `<pattern id="grain${suffix}" width="96" height="96" patternUnits="userSpaceOnUse"><image href="${g}" width="96" height="96" /></pattern>` : ''}
-    ${r ? `<pattern id="rust${suffix}" width="160" height="160" patternUnits="userSpaceOnUse"><image href="${r}" width="160" height="160" /></pattern>` : ''}
-    <linearGradient id="soot${suffix}" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#000" stop-opacity="0" /><stop offset="0.55" stop-color="#000" stop-opacity="0.18" /><stop offset="1" stop-color="#000" stop-opacity="0.6" />
-    </linearGradient>
-    <radialGradient id="vignette${suffix}" cx="0.5" cy="0.5" r="0.62">
-      <stop offset="0.55" stop-color="#000" stop-opacity="0" /><stop offset="1" stop-color="#000" stop-opacity="0.55" />
-    </radialGradient>`;
-}
+/** One look: a dark machined plate on a steel trestle, with anodised pieces in each player's colour. */
+const METAL: RGB = [96, 100, 116]; // pipe and stands
+const PLATE_SIDE: RGB = [58, 54, 66];
+const PIECE_SIDE: Record<Player, RGB> = { red: [214, 44, 68], blue: [42, 118, 216] };
 
 function shade(base: [number, number, number], light: number): string {
   const f = 0.45 + 0.55 * Math.max(0, Math.min(1, light));
@@ -231,7 +116,6 @@ export interface BoardView {
   pipeHalfWidth: number;
   lean: number; // radians
   yaw: number; // radians
-  theme: Theme;
   /** Cells punched through the plate. */
   holes: Set<number>;
   /** Stacks not drawn (an animation is carrying them). */
@@ -271,7 +155,6 @@ export interface RenderedBoard {
 
 export function renderBoard(view: BoardView): RenderedBoard {
   const cam: Camera = { lean: view.lean, yaw: view.yaw };
-  const pal = PALETTES[view.theme];
   const P = (v: V3, leans = true) => project(v, cam, leans);
   const out: string[] = [];
 
@@ -280,23 +163,14 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const pipeTop = -PLATE_T;
   const pipeBot = -PLATE_T - 2 * pipeA;
   const ground = pipeBot - 70;
-  const foundry = view.theme === 'foundry';
-  const pipeX = PLATE_HALF_W + (foundry ? 320 : 30);
-  if (!foundry) {
-    const shadow = [-1, 1].flatMap((sx) => [-1, 1].map((sy) => P([sx * (PLATE_HALF_W + 10), sy * 230, ground], false).p));
-    out.push(`<polygon class="ground-shadow" points="${fmt([shadow[0], shadow[1], shadow[3], shadow[2]])}" />`);
-  }
+  const pipeX = PLATE_HALF_W + 30;
+  // A pool of light on the floor under the table, then the plate's soft shadow inside it.
+  const floor = P([0, 0, ground], false).p;
+  const sinE = Math.sin(CAMERA_ELEVATION);
+  out.push(`<ellipse class="floor-glow" cx="${floor[0].toFixed(1)}" cy="${floor[1].toFixed(1)}" rx="${(PLATE_HALF_W * 1.5).toFixed(0)}" ry="${(PLATE_HALF_W * 1.05 * sinE).toFixed(0)}" fill="url(#floor)" />`);
+  out.push(`<ellipse class="ground-shadow" cx="${floor[0].toFixed(1)}" cy="${floor[1].toFixed(1)}" rx="${(PLATE_HALF_W * 1.02).toFixed(0)}" ry="${(250 * sinE).toFixed(0)}" />`);
 
-  const forge = view.theme === 'forge' || foundry;
-  /** Grime layers over a metal face: grain, rust and (on vertical faces) soot pooling low. */
-  const grit = (pts: V2[], suffix: string, vertical: boolean, rustiness = 1) =>
-    forge
-      ? `<polygon class="grit" points="${fmt(pts)}" fill="url(#grain${suffix})" opacity="0.55" />` +
-        `<polygon class="grit" points="${fmt(pts)}" fill="url(#rust${suffix})" opacity="${(0.75 * rustiness).toFixed(2)}" />` +
-        (vertical ? `<polygon class="grit" points="${fmt(pts)}" fill="url(#soot${suffix})" />` : '')
-      : '';
-
-  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, cls: string, rustiness = 1) => {
+  const box = (x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, cls: string) => {
     const faces: { pts: V2[]; depth: number; light: number }[] = [];
     const v = (x: number, y: number, z: number) => P([x, y, z], false);
     // Only faces turned toward the camera are drawn, so a box never shows its inside
@@ -319,41 +193,22 @@ export function renderBoard(view: BoardView): RenderedBoard {
     faces.sort((a, b) => a.depth - b.depth);
     return faces
       .map((f) => {
-        const fill = `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade(pal.metal, f.light)}" />`;
-        // A worn, lighter lip on top faces so edges catch the light.
-        const lip = forge && f === topFace ? `<polygon class="edge-hi" points="${fmt(f.pts)}" />` : '';
-        return fill + grit(f.pts, '-u', f !== topFace, rustiness) + lip;
+        const fill = `<polygon class="${cls}" points="${fmt(f.pts)}" fill="${shade(METAL, f.light)}" />`;
+        // A lighter lip on top faces so edges catch the light.
+        return fill + (f === topFace ? `<polygon class="edge-hi" points="${fmt(f.pts)}" />` : '');
       })
       .join('');
   };
   // Trestle stands: foot plate, post and a saddle clamped around the pipe.
-  const front = Math.cos(view.yaw) >= 0 ? 1 : -1; // which y face points at the camera
-  const bolt = (x: number, y: number, z: number) => {
-    const [bx, by] = P([x, y, z], false).p;
-    return forge ? `<circle class="bolt" cx="${bx.toFixed(1)}" cy="${by.toFixed(1)}" r="2.6" />` : '';
-  };
-  for (const sx of foundry ? [] : [-1, 1]) {
-    const cx = sx * pipeX;
-    out.push(box(cx - 22, cx + 22, -pipeA - 8, pipeA + 8, ground, ground + 6, 'stand'));
-    out.push(box(cx - 7, cx + 7, -12, 12, ground + 6, pipeBot - 6, 'stand'));
-    out.push(bolt(cx - 15, front * (pipeA + 8), ground + 3) + bolt(cx + 15, front * (pipeA + 8), ground + 3));
-  }
-  out.push(box(-pipeX - 14, pipeX + 14, -pipeA, pipeA, pipeBot, pipeTop, 'pipe', 1.4));
-  if (forge) {
-    // Flanged end caps on the square tube.
-    for (const sx of [-1, 1]) out.push(box(sx * (pipeX + 14) - 2, sx * (pipeX + 14) + 2, -pipeA - 5, pipeA + 5, pipeBot - 5, pipeTop, 'pipe flange', 1.2));
-    // A beaded weld seam along the near face of the square tube.
-    const seam = Array.from({ length: 40 }, (_, i) => {
-      const x = -pipeX - 10 + ((2 * pipeX + 20) * i) / 39;
-      return P([x, front * pipeA, (pipeBot + pipeTop) / 2], false).p;
-    });
-    out.push(`<polyline class="weld" points="${fmt(seam)}" />`);
-  }
-  // In the foundry the axle is held by bearing blocks just outside the plate.
   for (const sx of [-1, 1]) {
-    const cx = sx * (foundry ? PLATE_HALF_W + 46 : pipeX);
-    out.push(box(cx - 11, cx + 11, -pipeA - 4, pipeA + 4, pipeBot - 6, pipeTop, 'stand saddle'));
-    out.push(bolt(cx - 6, front * (pipeA + 4), pipeBot - 2) + bolt(cx + 6, front * (pipeA + 4), pipeBot - 2));
+    const cx = sx * pipeX;
+    out.push(box(cx - 26, cx + 26, -pipeA - 12, pipeA + 12, ground, ground + 7, 'stand'));
+    out.push(box(cx - 8, cx + 8, -13, 13, ground + 7, pipeBot - 6, 'stand'));
+  }
+  out.push(box(-pipeX - 16, pipeX + 16, -pipeA, pipeA, pipeBot, pipeTop, 'pipe'));
+  for (const sx of [-1, 1]) {
+    const cx = sx * pipeX;
+    out.push(box(cx - 12, cx + 12, -pipeA - 4, pipeA + 4, pipeBot - 6, pipeTop, 'stand saddle'));
   }
   const under = out.splice(0, out.length);
 
@@ -364,14 +219,16 @@ export function renderBoard(view: BoardView): RenderedBoard {
     const [ex, ey] = [b[0] - a[0], b[1] - a[1]];
     return { pts: pts.map((q) => q.p), depth: pts.reduce((s, q) => s + q.depth, 0) / 4, light: faceLight(ey, -ex, view.yaw) };
   }).sort((a, b) => a.depth - b.depth);
-  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade(pal.plateSide, s.light)}" />${grit(s.pts, '', true, 1.2)}`);
+  for (const s of sides) out.push(`<polygon class="plate-side" points="${fmt(s.pts)}" fill="${shade(PLATE_SIDE, s.light)}" />`);
   const plateTop = fmt(PLATE.map(([x, y]) => P([x, y, 0]).p));
   out.push(`<polygon class="plate-top" points="${plateTop}" />`);
-  if (forge) {
-    out.push(`<polygon class="grain" points="${plateTop}" fill="url(#grain)" />`);
-    out.push(`<polygon class="grit" points="${plateTop}" fill="url(#rust)" opacity="0.38" />`);
-    out.push(`<polygon class="grit" points="${plateTop}" fill="url(#vignette)" />`);
-  }
+  // Each half is faintly tinted in its owner's colour, and the pivot axis is scribed across the middle.
+  const half = (idx: number[]) => fmt(idx.map((i) => P([PLATE[i][0], PLATE[i][1], 0]).p));
+  out.push(`<polygon class="half half-red" points="${half([5, 0, 1, 2])}" />`);
+  out.push(`<polygon class="half half-blue" points="${half([2, 3, 4, 5])}" />`);
+  const axisA = P([-PLATE_HALF_W * 0.94, 0, 0]).p;
+  const axisB = P([PLATE_HALF_W * 0.94, 0, 0]).p;
+  out.push(`<line class="pivot-line" x1="${axisA[0].toFixed(1)}" y1="${axisA[1].toFixed(1)}" x2="${axisB[0].toFixed(1)}" y2="${axisB[1].toFixed(1)}" />`);
 
   // Each player's half gets a coloured rim along the plate edge; the two rims meet at
   // the pointed ends, right over the pipe.
@@ -380,21 +237,6 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const rimPath = (idx: number[]) => fmt(idx.map((i) => P([rimPts[i][0], rimPts[i][1], 0]).p));
   out.push(`<polyline class="rim rim-red" points="${rimPath([5, 0, 1, 2])}" />`);
   out.push(`<polyline class="rim rim-blue" points="${rimPath([2, 3, 4, 5])}" />`);
-
-  // Rivets around the forge plate.
-  if (forge) {
-    const rv = inset(0.955);
-    for (let i = 0; i < rv.length; i++) {
-      const [ax, ay] = rv[i];
-      const [bx, by] = rv[(i + 1) % rv.length];
-      const n = Math.max(2, Math.round(Math.hypot(bx - ax, by - ay) / 42));
-      for (let k = 0; k < n; k++) {
-        const t = (k + 0.5) / n;
-        const [x, y] = P([ax + (bx - ax) * t, ay + (by - ay) * t, 0]).p;
-        out.push(`<ellipse class="rivet" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" rx="3.4" ry="${(3.4 * Math.sin(CAMERA_ELEVATION)).toFixed(1)}" />`);
-      }
-    }
-  }
 
   /** Overheat countdowns, drawn above the stacks so a piece on the slot never hides them. */
   const heatBadges: [number, number, number][] = [];
@@ -426,7 +268,9 @@ export function renderBoard(view: BoardView): RenderedBoard {
       out.push(`<polygon class="heat-glow ${heatCls}" points="${hex(R - 3)}" />`);
       if (h!.cooldown > 1) heatBadges.push([tx, ty, h!.cooldown - 1]);
     }
-    out.push(`<g class="${classes}" data-id="${id}"><polygon class="slot-hex" points="${hex(R - 3)}" />${spawn ? `<polygon class="spawn-ring" points="${hex(R - 8)}" />` : ''}</g>`);
+    // A recessed well: the rim at plate level, and a smaller, darker floor a little below it.
+    const wellFloor = fmt(hex2(cx, cy, R - 7).map(([x, y]) => P([x, y, -5]).p));
+    out.push(`<g class="${classes}" data-id="${id}"><polygon class="slot-hex" points="${hex(R - 3)}" /><polygon class="slot-floor" points="${wellFloor}" />${spawn ? `<polygon class="spawn-ring" points="${hex(R - 9)}" />` : ''}</g>`);
   }
   out.push('</g>');
 
@@ -467,7 +311,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
           return `<line class="seam" x1="${p1[0].toFixed(1)}" y1="${p1[1].toFixed(1)}" x2="${p2[0].toFixed(1)}" y2="${p2[1].toFixed(1)}" />`;
         }).join('');
         return {
-          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade(pal.pieceSide, faceLight(mid[0], mid[1], view.yaw))}" />${forge ? `<polygon class="grit" points="${fmt(pts.map((q) => q.p))}" fill="url(#soot)" opacity="0.8" />` : ''}${seams}`,
+          svg: `<polygon class="piece-side" points="${fmt(pts.map((q) => q.p))}" fill="${shade(PIECE_SIDE[stack.owner], faceLight(mid[0], mid[1], view.yaw))}" />${seams}`,
           depth: pts.reduce((s, q) => s + q.depth, 0) / 4,
         };
       })
@@ -493,7 +337,7 @@ export function renderBoard(view: BoardView): RenderedBoard {
             })
             .join('')}<polygon points="${top}" /></g>`
         : '';
-    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" />${forge ? `<polygon class="grit" points="${top}" fill="url(#grain)" opacity="0.7" />` : ''}${glow}<polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
+    out.push(`<g class="${classes}" data-id="${id}">${faces}<polygon class="piece-top" points="${top}" fill="url(#top-${stack.owner})" />${glow}<polygon class="piece-sheen" points="${sheen}" /><text class="piece-count" transform="${faceMatrix(cx, cy, height)}" y="6">${stack.count}</text></g>`);
   }
 
   // Destination outlines drawn above everything, so a tall stack in front never hides
@@ -529,16 +373,24 @@ export function renderBoard(view: BoardView): RenderedBoard {
   const viewBox = `${VIEWBOX.x.toFixed(0)} ${VIEWBOX.y.toFixed(0)} ${VIEWBOX.w.toFixed(0)} ${VIEWBOX.h.toFixed(0)}`;
 
   return {
-    under: `<svg class="board-under" viewBox="${viewBox}" aria-hidden="true">${forge ? `<defs>${forgeDefs('-u')}</defs>` : ''}${under.join('')}</svg>`,
+    under: `<svg class="board-under" viewBox="${viewBox}" aria-hidden="true">
+    <defs>
+      <radialGradient id="floor" cx="0.5" cy="0.5" r="0.5">
+        <stop offset="0" stop-color="#ff3b55" stop-opacity="0.2" /><stop offset="0.55" stop-color="#b3122c" stop-opacity="0.07" /><stop offset="1" stop-color="#b3122c" stop-opacity="0" />
+      </radialGradient>
+    </defs>
+    ${under.join('')}</svg>`,
     board: `<svg class="board" viewBox="${viewBox}" role="img" aria-label="Hexagonal balance board">
     <defs>
       <linearGradient id="plate" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="${pal.plateStops[0]}" /><stop offset="0.5" stop-color="${pal.plateStops[1]}" /><stop offset="1" stop-color="${pal.plateStops[2]}" />
+        <stop offset="0" stop-color="#3a3642" /><stop offset="0.5" stop-color="#26232d" /><stop offset="1" stop-color="#17151c" />
       </linearGradient>
-      <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="${pal.steelStops[0]}" /><stop offset="0.45" stop-color="${pal.steelStops[1]}" /><stop offset="1" stop-color="${pal.steelStops[2]}" />
+      <linearGradient id="top-red" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#ff95a1" /><stop offset="0.45" stop-color="#f23a52" /><stop offset="1" stop-color="#a8152e" />
       </linearGradient>
-      ${forge ? forgeDefs('') : ''}
+      <linearGradient id="top-blue" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#a8d6ff" /><stop offset="0.45" stop-color="#3f97f2" /><stop offset="1" stop-color="#1b52a6" />
+      </linearGradient>
     </defs>
     ${out.join('\n')}
   </svg>`,
