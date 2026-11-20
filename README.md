@@ -4,7 +4,17 @@
 
 **Live:** https://hex-balance.vercel.app
 
-![Hex Balance against the hard bot: the hexagonal plate on its pivot, the balance meter and the dice panel](docs/screenshot.jpg)
+![Hex Balance against the hard bot: the hexagonal plate on its pivot, a picked-up stack with its moves marked, the balance gauge and the dice panel](docs/screenshot.jpg)
+
+| Title | Phone |
+| --- | --- |
+| ![The start menu](docs/after-title.jpg) | ![The game at phone width, with the dice panel pinned to the bottom](docs/after-phone.jpg) |
+
+The look was redone on 2026-11-20. Before:
+
+| Game, before | Title, before |
+| --- | --- |
+| ![The earlier Neon style: grey pieces with thin coloured outlines](docs/before-game.jpg) | ![The earlier title screen](docs/before-title.jpg) |
 
 Zach Shirley and a best friend designed and built Hex Balance as a physical game in high school, and Zach rebuilt it as a web game in a couple of days with an AI coding agent. The original board was a hexagonal steel plate resting on a square pipe across its middle. Each player owns the half on their side of the pipe, and you roll dice to add, move, merge and knock over stacks of steel pieces. Weight far from the pipe counts more. If the plate tips toward you, you lose. "Hex Balance" is a working title, because nobody remembers what the original was called.
 
@@ -21,7 +31,6 @@ Zach Shirley and a best friend designed and built Hex Balance as a physical game
 - Tap a highlighted stack to pick it up and see where it can go, or tap a spawn slot to spawn. The meter beside the board shows how close each side is to tipping, and hovering a move previews where the meter would land. Dice with no legal move are skipped automatically.
 The game opens on a start menu. **Start game** leads to a setup screen with these choices:
 - **Opponent:** two players on one device, or an Easy, Medium or Hard bot. Against a bot you play Red and move first.
-- **Style:** Neon (default) or Forge.
 - **Rules and experiments:**
   - plate mass and starting pieces;
   - forced moves;
@@ -75,6 +84,12 @@ Hosted on Vercel at https://hex-balance.vercel.app. Pushes to `main` on GitHub (
 - the online room in two tabs, locally and on the live site;
 - the phone-width layout, in a 375 px emulated viewport.
 
+**Re-checked after the 2026-11-20 visual redo** (locally, with no console errors):
+- a game against the Hard bot played by tapping the board, through to the bot's win and the result card;
+- a hot-seat game through to a tip-over and the result card;
+- an online room in two tabs: both sides connected, the host's turn passed and the guest rolled;
+- the title, setup and game screens at desktop width and at 375 px.
+
 **Not tested:**
 - online play between two different home networks;
 - real phones and tablets (only emulated);
@@ -86,7 +101,6 @@ Hosted on Vercel at https://hex-balance.vercel.app. Pushes to `main` on GitHub (
 - The rules are a best-effort reconstruction. Die 4 (strike) is a guess, and the movement, spawning and starting-piece details are assumptions (see the table below).
 - **Online play** has no accounts and no server of its own. It uses PeerJS's free public servers, so it depends on their uptime. The host's tab must stay open, and the guest has to trust the host's dice.
 - **The bots** play Blue only. They are tuned against each other, not against people. On big combo turns they think for up to about 2 seconds.
-- Some chunks of the production bundle are over 500 kB. The archived 3D style (below) accounts for most of that, and it only loads if that style is enabled.
 
 ## How it was built
 
@@ -112,7 +126,7 @@ From there, the game grew through rounds of Zach playing it and giving direction
 - shake as the plate nears tipping;
 - combos as a core rule, and merge/split on the 3;
 - the experiments;
-- two visual styles;
+- two visual styles, later replaced by a single look (below);
 - the single-player bots.
 
 **Locked rules (2026-10-15):**
@@ -139,33 +153,41 @@ Passing on a die that still has a legal move also costs the bot something, becau
 
 Easy plays one die at a time and is often random. Medium plans its whole turn. Hard also checks every possible opponent reply roll. The bots run in a Web Worker so the board keeps animating.
 
-**Archived style:** a 3D "Foundry" arena (Three.js) was built and then archived on 2026-10-19. Its code is kept in `src/scene3d.ts` and at git tag `foundry-archive`.
+**Visual redo (2026-11-20):** Zach asked for the visuals to be redone and left the style to the agent. The game now has one look, "crimson steel":
+- **Pieces** are in their owner's colour, so you can tell whose stack is whose at a glance. Before, they were grey with a thin coloured outline.
+- **The plate** has recessed cells, a faint tint on each player's half, and a dotted line scribed along the pivot.
+- **The stand** is solid steel with a pool of light on the floor under it.
+- **The gauge** shows the percentage on its marker, with hatched bands for the last 20% before tipping.
+- **Player chips** above and below the board show who is to move, their piece count and how close their side is to tipping.
+- **Callouts** stamp combos, breakthroughs and overheats over the board.
+- **Amber** is kept for "your move": the main button on each screen and the stacks you can pick up.
+- **Type** is Unbounded for display and Inter for text.
+
+The earlier Neon and Forge styles were retired in the redo, along with the Style picker. The 3D "Foundry" arena (Three.js), archived on 2026-10-19, was removed from the code at the same time. All three remain in the history at git tag `foundry-archive`.
 
 ## Code
 
 - `src/board.ts`: board geometry, neighbours, spawn slots, lever arms
 - `src/rules.ts`: game state, legal actions, dice, combos, balance and tipping (pure, no DOM)
-- `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks
+- `src/view3d.ts`: 2.5D projection of the plate, pipe and stacks into SVG
 - `src/bot.ts`, `src/botWorker.ts`: single-player bots and the worker they run in
 - `src/net.ts`: PeerJS host/guest sessions
 - `src/main.ts`, `src/style.css`: UI, dice panel, balance meter, animation, panels
-- `src/scene3d.ts`: archived 3D style
 
 ## AI assistance and Zach's role
 
 The code was written with an AI coding agent (Claude Code). Zach's part:
 - He supplied the original game, the board photo and the rule recollections.
-- He made the design calls: the pipe width, combos as core, which experiments to try, the visual direction, and archiving the 3D style.
+- He made the design calls: the pipe width, combos as core, which experiments to try, the early visual direction, and archiving the 3D style. For the 2026-11-20 visual redo he set the brief (make it look better, keep the board and animations that work) and left the art direction to the agent.
 - He playtested and reported problems. The breaking point felt inconsistent, the board vanished, and the Medium bot never spawned and lost to a tall-stack rush. Each report led to a fix.
 
 The agent did the implementation, the tests, the simulations and the bot tuning.
 
 ## Attribution
 
-- Fonts are loaded from Google Fonts, under their open licenses.
+- Fonts: Unbounded and Inter, loaded from Google Fonts, both under the SIL Open Font License.
 - Libraries:
   - PeerJS (MIT) for online play;
-  - Three.js (MIT) for the archived 3D style;
   - Vite, TypeScript and Vitest for building and testing.
 - No third-party art assets are used.
 
